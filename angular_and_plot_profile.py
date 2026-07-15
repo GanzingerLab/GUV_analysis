@@ -19,7 +19,7 @@ PATH = r"D:\Data\EVOLF"
 num_angles = 360
 length_excess = 1.5
 dr = 1
-
+#vesicle size
 SIZE_VIEW = length_excess
 
 INNER_MARGIN = 1.2
@@ -30,9 +30,9 @@ PARAMETERS_PROFILES = np.array((num_angles, length_excess, dr))
 PLOT_RESULTS = True
 pixels_to_remove = 2
 size_central_area = 1/4            # the central area radius (unit of measure: each vesicles' radius) considered during localization quantification
-# =============================================================================
+
 # Image loading and saving
-# =============================================================================
+
 
 def open_czi(path):
     img_bio = BioImage(path)
