@@ -8,18 +8,20 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from bioio import BioImage
 from scipy.signal import find_peaks, peak_widths
-
+import tifffile as tif
+from tqdm import tqdm
+#%%
 # Parameters
 
 GUV_CH = 0
 DETECTION_SUFFIX = "_detected_vesicles.csv"
 
 PATH = r"D:\Data\EVOLF"
-
+IMAGE_FORMAT = '.czi'
 num_angles = 360
 length_excess = 1.5
 dr = 1
-#vesicle size
+
 SIZE_VIEW = length_excess
 
 INNER_MARGIN = 1.2
@@ -28,17 +30,28 @@ OUTER_MARGIN = 2.0
 PARAMETERS_PROFILES = np.array((num_angles, length_excess, dr))
 
 PLOT_RESULTS = True
+
 pixels_to_remove = 2
-size_central_area = 1/4            # the central area radius (unit of measure: each vesicles' radius) considered during localization quantification
-
+size_central_area = 1/4  # the central area radius (unit of measure: each vesicles' radius) considered during localization quantification
+#%%
 # Image loading and saving
-
-
 def open_czi(path):
     img_bio = BioImage(path)
     img = img_bio.get_image_data()
-    return img, img_bio.dims.order
 
+    img, dims = squeeze_singleton_dims(img, img_bio.dims.order)
+
+    return img
+
+def open_tif(path):
+    img = tif.imread(path)
+    return img
+
+def open_image(path):
+    if path[-4:] == '.tif':
+        return open_tif(path)
+    if path[-4:] == '.czi':
+        return open_czi(path)
 
 def squeeze_singleton_dims(img, dims):
     keep_dims = []
@@ -813,8 +826,10 @@ def save_separate_profile_plots(
         fig.savefig(angular_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
 
+
+#%%
 # Run analysis
-images = glob(os.path.join(PATH, "**", "*.czi"), recursive=True)
+images = glob(os.path.join(PATH, "**", "*"+IMAGE_FORMAT), recursive=True)
 all_results = []
 for image_i, image_path in enumerate(images):
     print(image_path)
@@ -824,13 +839,10 @@ for image_i, image_path in enumerate(images):
 
     output_folder = get_output_folder(image_path, PATH)
 
-    img_full, dims_full = open_czi(image_path) #open image
-    img, dims = squeeze_singleton_dims(img_full, dims_full) #remove unused channels
+    img = open_image(image_path) #open image
 
-    if dims != "CYX": #we can change this in the future if you do timelapses or Z-stacks
-        raise ValueError(f"Expected dimensions CYX after squeezing, got {dims}")
     #changes .czi to the suffix you had set and if the CSv exists it opens it
-    csv_path = image_path.replace(".czi", DETECTION_SUFFIX)
+    csv_path = image_path.replace(IMAGE_FORMAT, DETECTION_SUFFIX)
 
     if not os.path.exists(csv_path):
         print(f"Skipping image. Detection CSV not found: {csv_path}")
@@ -896,7 +908,7 @@ for image_i, image_path in enumerate(images):
         radial_profiles  = radial_profiles[pixels_to_remove:,:]
         along_radius     = along_radius[pixels_to_remove:]
 
-        index_border_in, index_border_out, comment_peak, death_mark_peak = membrane_detection(radial_profiles[:,0], locs[ves_i,3])
+        index_border_in, index_border_out, comment_peak, death_mark_peak = membrane_detection(radial_profiles[:,GUV_CH], locs[ves_i,3])
 
         ## Registration of the triggered conditions for automatic vesicle rejection:
         if comment_peak:
