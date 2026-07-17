@@ -9,14 +9,15 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from bioio import BioImage
 from scipy.ndimage import uniform_filter1d
-
+import tifffile as tif
+from tqdm import tqdm
 
 # %% Global parameters and functions
 GUV_CH = 0
 DETECTION_SUFFIX = "_detected_vesicles.csv"
 
 PATH = r"D:\Data\EVOLF"
-
+IMAGE_FORMAT = '.tif'
 num_angles = 120
 length_excess = 1.5
 dr = 1
@@ -46,11 +47,25 @@ PLOT_RESULTS = True
 pixels_to_remove = 2
 size_central_area = 1 / 4
 
-
+#%%
+# Image loading and saving
 def open_czi(path):
     img_bio = BioImage(path)
     img = img_bio.get_image_data()
-    return img, img_bio.dims.order
+
+    img, dims = squeeze_singleton_dims(img, img_bio.dims.order)
+
+    return img
+
+def open_tif(path):
+    img = tif.imread(path)
+    return img
+
+def open_image(path):
+    if path[-4:] == '.tif':
+        return open_tif(path)
+    if path[-4:] == '.czi':
+        return open_czi(path)
 
 def get_image_stem(image_path):
     image_name = os.path.basename(image_path)
@@ -1060,24 +1075,18 @@ def reorder_summary_columns(results_df):
     return results_df
 # %% 1. Detect membrane positions and save JSON
 
-images = glob(os.path.join(PATH, "**", "*.czi"), recursive=True)
+images = glob(os.path.join(PATH, "**", "*"+IMAGE_FORMAT), recursive=True)
 
 detection_results = []
 
-for image_i, image_path in enumerate(images):
-
+for image_i, image_path in tqdm(enumerate(images), total=len(images)):
     print(image_path)
-
     output_folder = get_output_folder(image_path, PATH)
     membrane_positions = {}
 
-    img_full, dims_full = open_czi(image_path)
-    img, dims = squeeze_singleton_dims(img_full, dims_full)
+    img = open_image(image_path)
 
-    if dims != "CYX":
-        raise ValueError(f"Expected dimensions CYX after squeezing, got {dims}")
-
-    csv_path = image_path.replace(".czi", DETECTION_SUFFIX)
+    csv_path = image_path.replace(IMAGE_FORMAT, DETECTION_SUFFIX)
 
     if not os.path.exists(csv_path):
         print(f"Skipping image. Detection CSV not found: {csv_path}")
@@ -1098,8 +1107,6 @@ for image_i, image_path in enumerate(images):
 
         ves_coordinates = locs[ves_i, :]
         vesicle_id = int(ves_coordinates[0])
-
-        print(f"  Vesicle {ves_i + 1}/{num_vesicles}: ID {vesicle_id}")
 
         # 1. Calculate raw linear profiles from original detected centre
         intensity_profiles, along_radius, theta, death_mark = linear_profiles(
@@ -1246,7 +1253,7 @@ print(f"\nDone. Membrane detection results saved to: {detection_results_path}")
 
 # %% EXAMPLE Load membrane JSON and plot GUV outline
 
-membrane_path = r"D:\Data\EVOLF\output\20260617_GUV_FLuo4_TRIMEB_aHL_perm_2_test_analysis_radial_profile\membrane_positions_20260610_D4_t0-04.json"
+membrane_path = r"D:\Data\EVOLF\output\20260617_GUV_FLuo4_TRIMEB_aHL_perm_2_test_analysis_radial_profile\20260610_D4_t0-04_membrane_positions.json"
 
 source_file, vesicles = load_membrane_positions_json(membrane_path)
 
@@ -1280,12 +1287,12 @@ membrane_jsons = glob(
 )
 
 # Find all original CZI files once
-images = glob(os.path.join(PATH, "**", "*.czi"), recursive=True)
+images = glob(os.path.join(PATH, "**", "*"+IMAGE_FORMAT), recursive=True)
 
 # Store results from all images and all GUVs in one list
 profile_results = []
 
-for membrane_path in membrane_jsons:
+for membrane_path in tqdm(membrane_jsons):
 
     print(f"\nProcessing membrane file: {membrane_path}")
 
@@ -1309,13 +1316,9 @@ for membrane_path in membrane_jsons:
 
     output_folder = get_output_folder(image_path, PATH)
 
-    img_full, dims_full = open_czi(image_path)
-    img, dims = squeeze_singleton_dims(img_full, dims_full)
+    img = open_image(image_path)
 
-    if dims != "CYX":
-        raise ValueError(f"Expected dimensions CYX after squeezing, got {dims}")
-
-    csv_path = image_path.replace(".czi", DETECTION_SUFFIX)
+    csv_path = image_path.replace(IMAGE_FORMAT, DETECTION_SUFFIX)
 
     if not os.path.exists(csv_path):
         print(f"Skipping image. Detection CSV not found: {csv_path}")
@@ -1338,8 +1341,6 @@ for membrane_path in membrane_jsons:
             continue
 
         ves_coordinates = matching_rows[0, :]
-
-        print(f"Analyzing radial profile for vesicle {vesicle_id}")
 
         # 1. Calculate raw linear profiles from original detected centre
         intensity_profiles, along_radius, theta, death_mark = linear_profiles(
