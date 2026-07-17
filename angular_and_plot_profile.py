@@ -29,7 +29,7 @@ OUTER_MARGIN = 2.0
 
 PARAMETERS_PROFILES = np.array((num_angles, length_excess, dr))
 
-PLOT_RESULTS = True
+PLOT_RESULTS = False
 
 pixels_to_remove = 2
 size_central_area = 1/4  # the central area radius (unit of measure: each vesicles' radius) considered during localization quantification
@@ -831,7 +831,7 @@ def save_separate_profile_plots(
 # Run analysis
 images = glob(os.path.join(PATH, "**", "*"+IMAGE_FORMAT), recursive=True)
 all_results = []
-for image_i, image_path in enumerate(images):
+for image_i, image_path in tqdm(enumerate(images), total=len(images),):
     print(image_path)
     comment = []
     # Open data for each image
@@ -859,8 +859,6 @@ for image_i, image_path in enumerate(images):
     for ves_i in range(num_vesicles):
         ves_coordinates = locs[ves_i, :]
         vesicle_id = ves_coordinates[0]
-
-        print(f"  Vesicle {ves_i + 1}/{num_vesicles}: ID {vesicle_id}")
 
         # 1. Calculate linear profiles
         intensity_profiles, along_radius, theta, death_mark = linear_profiles(img, ves_coordinates, image_dim, PARAMETERS_PROFILES)
