@@ -35,255 +35,12 @@ pixels_to_remove = 2
 size_central_area = 1/4  # the central area radius (unit of measure: each vesicles' radius) considered during localization quantification
 #%%
 # Image loading and saving
-def open_czi(path):
-    img_bio = BioImage(path)
-    img = img_bio.get_image_data()
 
-    img, dims = squeeze_singleton_dims(img, img_bio.dims.order)
 
-    return img
 
-def open_tif(path):
-    img = tif.imread(path)
-    return img
-
-def open_image(path):
-    if path[-4:] == '.tif':
-        return open_tif(path)
-    if path[-4:] == '.czi':
-        return open_czi(path)
-
-def squeeze_singleton_dims(img, dims):
-    keep_dims = []
-
-    for size, dim in zip(img.shape, dims):
-        if size != 1:
-            keep_dims.append(dim)
-
-    img_squeezed = np.squeeze(
-        img,
-        axis=tuple(axis for axis, size in enumerate(img.shape) if size == 1)
-    )
-
-    dims_squeezed = "".join(keep_dims)
-
-    return img_squeezed, dims_squeezed
-
-def get_output_folder(image_path, base_path):
-    """
-    Create and return the output folder corresponding to one image.
-
-    Example
-    -------
-    base_path:
-        D:\\Data\\EVOLF
-
-    image_path:
-        D:\\Data\\EVOLF\\a\\b\\file.czi
-
-    returns:
-        D:\\Data\\EVOLF\\output\\a\\b
-    """
-
-    relative_path = os.path.relpath(image_path, base_path)
-    relative_folder = os.path.dirname(relative_path)
-
-    output_folder = os.path.join(base_path, "output", relative_folder)
-    os.makedirs(output_folder, exist_ok=True)
-
-    return output_folder
 # =============================================================================
 # Analysis functions
 # =============================================================================
-
-def linear_profiles(channels_data, ves_coordinates, image_dim, parameters_profiles):
-    """
-    Calculation of the multiple linear profiles for a single vesicle.
-
-    Input
-    -----
-    channels_data : np.ndarray
-        The channels of the image to be analyzed.
-        channels_data[0,:,:] always corresponds to the Membrane channel
-
-    ves_coordinates : np.ndarrya
-        1-dimensional array with the coordinates of the single vesicle we want 
-        to focus on.  
-        ves_coordinates[0]: vesicle id 
-        ves_coordinates[1]: xc (in px) 
-        ves_coordinates[2]: yc (in px) 
-        ves_coordinates[3]: radius (in px)
-        
-    image_dim : np.ndarray
-        The original image's dimensions. 
-        image_dim[0] corresponds to the x direction.
-        image_dim[1] corresponds to the y direction.
-        
-    parameters_profiles : np.ndarray
-        The 3 important parameters for the linear profile calculation:
-        parameters_profiles[0] : number of linear profiles to consider for a 
-                                 single vesicle
-        parameters_profiles[1] : length of the linear profiles 
-                                 (unit of measure: vesicle radius)
-        parameters_profiles[2] : the step (in px) for sampling along the vesicle
-                                 radius
-        
-    Returns
-    -------
-    intensity_profiles : np.ndarray
-        The intensity linear profiles calculated.
-        Note: Data related to different channels are stored along the 3rd 
-              dimension of the array. Element [:,:,0] is always based on the 
-              membrane channel, element [:,:,1] is based on the single protein
-              present. If both proteins are present, element [:,:,1] corresponds
-              to the septin channel and element [:,:,2] corresponds to the actin
-              channel.
-        
-    along_radius : np.ndarray
-        The points along the linear profiles, starting from the center of the
-        vesicle. 
-    
-    theta : np.ndarray
-        The angles considered for the linear profiles.
-        
-    death_mark : bool
-        If True, the vesicle's requested intensity profile is extending outside
-        of the image borders and the vesicle is marked to be disregarded. 
-        If False, the vesicle's position doesn't raise an issue and the analysis
-        can be continued.
-
-    """
-    num_channels = channels_data.shape[0]
-
-    xc = ves_coordinates[1]
-    yc = ves_coordinates[2]
-    radius = ves_coordinates[3]
-
-    num_angles = int(parameters_profiles[0])
-    length_excess = parameters_profiles[1]
-    dr = parameters_profiles[2]
-
-    profile_radius_limit = length_excess * radius
-
-    theta = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
-    along_radius = np.arange(0, int(profile_radius_limit), dr)
-    profile_radius = len(along_radius)
-
-    intensity_profiles = np.zeros((profile_radius, num_angles, num_channels))
-
-    death_mark = False
-
-    if (
-        xc + profile_radius_limit >= image_dim[0]
-        or xc - profile_radius_limit < 0
-        or yc + profile_radius_limit >= image_dim[1]
-        or yc - profile_radius_limit < 0
-    ):
-        death_mark = True
-        return intensity_profiles, along_radius, theta, death_mark
-
-    line_x = (
-        np.full((profile_radius, num_angles), int(xc))
-        + np.rint(
-            np.matmul(
-                np.transpose(np.asmatrix(along_radius)),
-                np.asmatrix(np.cos(theta))
-            )
-        )
-    )
-
-    line_y = (
-        np.full((profile_radius, num_angles), int(yc))
-        + np.rint(
-            np.matmul(
-                np.transpose(np.asmatrix(along_radius)),
-                np.asmatrix(np.sin(theta))
-            )
-        )
-    )
-
-    for i in range(profile_radius):
-        for j in range(num_angles):
-            for k in range(num_channels):
-                channel = channels_data[k, :, :]
-                intensity_profiles[i, j, k] = channel[
-                    int(line_y[i, j]),
-                    int(line_x[i, j])
-                ]
-
-    return intensity_profiles, along_radius, theta, death_mark
-
-
-def edit_output(path_to_output, exp_info, ves_coordinates, background, localization, comment):
-    """
-    Adds all relevant information for a single vesicle in a row of the previously
-    created output file.
-
-    Parameters
-    ----------
-    path_to_output : str
-        The path to the folder to output folder.
-    
-    exp_info : list
-        Contains information of the file's name in order:
-        exp_info[0]: the experiment date
-        exp_info[1]: the experiment name
-        exp_info[2]: the name of the image to be analyzed
-        exp_info[3]: full representative name by combining the previous information
-    
-    ves_coordinates : np.ndarrya
-        1-dimensional array with the coordinates of the single vesicle we want 
-        to focus on.  
-        ves_coordinates[0]: vesicle id 
-        ves_coordinates[1]: xc (in px) 
-        ves_coordinates[2]: yc (in px) 
-        ves_coordinates[3]: radius (in px)
-        
-     background : np.ndarray
-         The background noise estimated for the different channels
-         Data related to different 
-         channels are stored along the 3rd dimension of the array:
-         background[:,0] always corresponds to the background of the membrane channel.
-         If only one protein is present:
-         background[:,1] corresponds to the background of that protein's channel.
-         If two proteins are present:
-         background[:,1] corresponds to the background of the septin channel.    
-         background[:,2] corresponds to the background of the actin channel.
-     
-     localization : np.ndarray
-         The quantified localization of the protein(s) at the membrane.
-         If only one protein is present, then localization has a single element
-         corresponding to that protein. 
-         If both proteins are present, localization[0] corresponds to the septin
-         channel and localization[1] corresponds to the actin channel. 
-     
-    comment : list
-         A list of strings with relevant comments explaining (possible) issues 
-         related to the specific vesicle. 
-
-    """
-    list_exp_info = list(exp_info[:-1])
-    list_ves_coordinates = list(ves_coordinates)
-    list_background = list(background[0, :])
-    list_localization = list(localization)
-
-    vesicle_row = (
-        list_exp_info
-        + list_ves_coordinates
-        + list_background
-        + list_localization
-        + comment
-    )
-
-    output_file_path = os.path.join(
-        path_to_output,
-        exp_info[3] + "-Output.csv"
-    )
-
-    with open(output_file_path, "a", newline="") as output_file:
-        writer = csv.writer(output_file)
-        writer.writerow(vesicle_row)
-
 
 def background_correction(num_channels, intensity_profiles, background):
     """ 
@@ -325,7 +82,7 @@ def background_correction(num_channels, intensity_profiles, background):
 
     for i in range(num_channels):
         intensity_profiles_corrected[:, :, i] = np.clip(
-            intensity_profiles[:, :, i] - background[0, i],
+            intensity_profiles[:, :, i] - background[i],
             0,
             None
         )
@@ -365,10 +122,10 @@ def background_noise(
             f"No background pixels found for vesicle {ves_coordinates[0]}"
         )
 
-    background = np.zeros((1, num_channels))
+    background = np.zeros(num_channels)
 
     for ch in range(num_channels):
-        background[0, ch] = np.mean(channels_data[ch, :, :][background_mask])
+        background[ch] = np.mean(channels_data[ch, :, :][background_mask])
 
     return background
 
@@ -913,7 +670,7 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images),):
             comment = comment + comment_peak
         ## Output for profiles where no peak was detected is set to 0:
         if death_mark_peak:
-            background = np.zeros((1, num_channels))
+            background = np.zeros((num_channels))
             localization_values = np.zeros(num_channels - 1)
             comment = comment_peak
 
@@ -994,7 +751,7 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images),):
         }
 
         for ch in range(num_channels):
-            result_row[f"background_ch{ch}"] = background[0, ch]
+            result_row[f"background_ch{ch}"] = background[ch]
 
         for loc_value, ch in zip(localization_index, localization_channels):
             result_row[f"localization_ch{ch}"] = loc_value
