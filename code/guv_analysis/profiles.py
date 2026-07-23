@@ -138,3 +138,19 @@ def linear_profiles(channels_data, ves_coordinates, parameters_profiles):
     intensity_profiles = np.moveaxis(intensity_profiles,  0, -1).astype(np.float64)
 
     return intensity_profiles, along_radius, theta, death_mark
+
+def radial_profile(intensity_profiles):
+    """
+    Average the angular intensity profiles into one radial profile per channel.
+
+    Parameters
+    ----------
+    intensity_profiles : np.ndarray
+        Array with shape (radial_positions, angles, channels).
+
+    Returns
+    -------
+    np.ndarray
+        Mean radial profile with shape (radial_positions, channels).
+    """
+    return np.mean(intensity_profiles, axis=1)
