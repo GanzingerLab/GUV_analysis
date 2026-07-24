@@ -9,6 +9,7 @@ from bioio import BioImage
 from scipy.signal import find_peaks, peak_widths
 import tifffile as tif
 from tqdm import tqdm
+from scipy.interpolate import interp1d
 
 
 def linear_profiles(channels_data, ves_coordinates, parameters_profiles):
@@ -139,6 +140,83 @@ def linear_profiles(channels_data, ves_coordinates, parameters_profiles):
 
     return intensity_profiles, along_radius, theta, death_mark
 
+
+def trim_central_profiles(
+    intensity_profiles,
+    along_radius,
+    pixels_to_remove,
+):
+    """
+    Remove unreliable radial samples near the vesicle center.
+
+    The innermost samples are excluded because coordinate rounding can cause
+    multiple angular profiles to sample the same image pixels.
+
+    Parameters
+    ----------
+    intensity_profiles : np.ndarray
+        Intensity profiles with shape
+        ``(radial_positions, angles, channels)``.
+
+    along_radius : np.ndarray
+        Radial coordinates corresponding to axis 0 of
+        ``intensity_profiles``.
+
+    pixels_to_remove : int
+        Number of samples to remove from the beginning of the radial axis.
+
+    Returns
+    -------
+    intensity_profiles : np.ndarray
+        Trimmed intensity profiles.
+
+    along_radius : np.ndarray
+        Radial coordinates corresponding to the trimmed profiles.
+    """
+    return intensity_profiles[pixels_to_remove:, :, :], along_radius[pixels_to_remove:]
+
+def circular_rolling_average_linear_profiles(intensity_profiles, window_size=5):
+    """
+    Smooth intensity profiles by circular rolling average of the intensity profiles along the angle axis.
+
+    The rolling average is applied across neighboring linear profiles/angles.
+    The angular axis is treated as circular, so the first and last profiles are
+    connected.
+
+    Input
+    -----
+    intensity_profiles : np.ndarray
+        Intensity profiles with shape:
+            radial position x angle/profile index x channel
+
+    window_size : int
+        Number of neighboring angular profiles to average.
+        Must be an odd number. For example, window_size=5 averages:
+            2 profiles before, current profile, 2 profiles after.
+
+    Returns
+    -------
+    intensity_profiles_smoothed : np.ndarray
+        Smoothed intensity profiles with the same shape as intensity_profiles.
+    """
+
+    if window_size % 2 == 0:
+        raise ValueError("window_size must be odd.")
+
+    half_window = window_size // 2
+
+    intensity_profiles_smoothed = np.zeros_like(intensity_profiles)
+
+    for shift in range(-half_window, half_window + 1):
+        intensity_profiles_smoothed = (
+            intensity_profiles_smoothed
+            + np.roll(intensity_profiles, shift=shift, axis=1)
+        )
+
+    intensity_profiles_smoothed = intensity_profiles_smoothed / window_size
+
+    return intensity_profiles_smoothed
+
 def radial_profile(intensity_profiles):
     """
     Average the angular intensity profiles into one radial profile per channel.
@@ -153,4 +231,149 @@ def radial_profile(intensity_profiles):
     np.ndarray
         Mean radial profile with shape (radial_positions, channels).
     """
+# TODO: Add optional normalization and interpolation onto a shared radial axis in the wrapper function in the class.
+# For circular GUVs, first calculate the mean radial profile, normalize
+# along_radius by the GUV radius, and interpolate all channels onto a fixed
+# axis such as np.linspace(0, max_normalized_distance, num_normalized_points).
+# This ensures profiles from GUVs with different radii have the same length
+# and can be compared, stacked, or averaged directly.
+
     return np.mean(intensity_profiles, axis=1)
+
+
+def normalized_radial_profile_from_detected_shape(
+    intensity_profiles,
+    along_radius,
+    peak_positions,
+    max_normalized_distance=1.5,
+    num_normalized_points=100,
+):
+    """
+    Calculate normalized radial profiles using angle-specific membrane positions.
+
+    For each angular profile, the distance axis is normalized by the detected
+    membrane position for that specific angle.
+
+    Therefore, for every angle:
+        detected membrane position = 1
+
+    Input
+    ----------
+    intensity_profiles : np.ndarray
+        Intensity profiles with shape
+        ``(radial_positions, angles, channels)``.
+
+    along_radius : np.ndarray
+        One-dimensional radial distance axis corresponding to the first
+        dimension of ``intensity_profiles``.
+
+    peak_positions : np.ndarray
+        Detected membrane position for each angle. Must have one value per
+        angular profile. Missing detections may be represented by ``np.nan``.
+
+    max_normalized_distance : float, default=1.5
+        Maximum value of the normalized radial axis.
+
+        For example, a value of 1.5 creates an axis extending from the GUV
+        center at 0 to 1.5 times the angle-specific membrane distance.
+        The membrane itself is located at 1.
+
+    num_normalized_points : int, default=100
+        Number of points in the common normalized radial axis.
+
+    Output
+    -------
+    radial_profiles_normalized : np.ndarray
+        Mean normalized radial profile, averaged over valid angles.
+        Shape: ``(num_normalized_points, channels)``.
+
+    normalized_distance_axis : np.ndarray
+        Common normalized radial axis.
+        Shape: ``(num_normalized_points,)``.
+
+    normalized_profiles : np.ndarray
+        Individual normalized profiles before averaging over angles.
+        Shape: ``(num_normalized_points, angles, channels)``.
+    """
+    _, num_angles, num_channels = intensity_profiles.shape
+
+    valid_peak_positions = (~np.isnan(peak_positions) & (peak_positions > 0))
+
+    if not np.any(valid_peak_positions):
+        raise ValueError(
+            "No valid peak positions found for normalization."
+        )
+
+    # Shared axis used for every normalized angular profile
+    normalized_distance_axis = np.linspace(0, max_normalized_distance, num_normalized_points)
+
+    normalized_profiles = np.full((num_normalized_points, num_angles, num_channels), np.nan, dtype=float)
+
+    for angle_i in range(num_angles):
+        membrane_distance = peak_positions[angle_i]
+
+        # Skip angles without a valid membrane detection
+        if np.isnan(membrane_distance) or membrane_distance <= 0:
+            continue
+
+        # Set the detected membrane position to normalized distance 1
+        distance_normalized = along_radius / membrane_distance
+
+        # Interpolate all channels for this angle at once
+        interpolator = interp1d(
+            distance_normalized,
+            intensity_profiles[:, angle_i, :],
+            axis=0,
+            bounds_error=False,
+            fill_value=np.nan,
+        )
+
+        normalized_profiles[:, angle_i, :] = interpolator(
+            normalized_distance_axis
+        )
+
+    # Average the aligned profiles over angle
+    radial_profiles_normalized = np.nanmean(
+        normalized_profiles,
+        axis=1,
+    )
+
+    return radial_profiles_normalized, normalized_distance_axis, normalized_profiles
+    
+
+
+def angular_profile(intensity_profiles, index_border_in, index_border_out):
+    """
+    Calculation of the angular profile along the membrane contour for a given 
+    vesicle.
+                        
+    Input
+    -----
+    intensity_profiles : np.ndarray
+        The intensity linear profiles calculated. Backgrounds corrections should
+        take place beforehand. 
+        Note: Data related to different channels are stored along the 3rd 
+              dimension of the array. Element [:,:,i] refers tyo each channel.
+              
+    index_border_in : int
+        The index of the element corresponding to the inner border of the membrane.
+        
+    index_border_out : int
+        The index of the element corresponding to the outer border of the membrane.
+        
+    Returns
+    -------
+    angular_profiles : np.ndarray
+        The angular profile along the membrane contour for a given vesicle.
+        The profiles corresponding to the different channels are stored along 
+        the 3rd dimension. 
+        
+    
+    """
+
+    start = index_border_in
+    stop = index_border_out
+
+    return np.mean(intensity_profiles[start:stop, :, :], axis=0)
+
+
