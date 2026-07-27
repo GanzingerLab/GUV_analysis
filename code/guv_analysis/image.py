@@ -1,4 +1,6 @@
-def crop_around_guv(img, size_factor, ves_coordinates):
+import numpy as np 
+
+def crop_around_guv(img, size_factor, ves_coordinates, return_origin=False):
     """
     Crop all image channels around one GUV, shifting the crop when necessary
     so it remains inside the image boundaries.
@@ -20,37 +22,30 @@ def crop_around_guv(img, size_factor, ves_coordinates):
         Cropped channel-first image with shape
         (n_channels, crop_height, crop_width).
     """
-    xc = ves_coordinates[1]
-    yc = ves_coordinates[2]
+    xc = int(round(ves_coordinates[1]))
+    yc = int(round(ves_coordinates[2]))
     radius = ves_coordinates[3]
 
     _, height, width = img.shape
-    half_size = int(size_factor * radius)
 
-    x_start = int(xc - half_size)
-    x_end = int(xc + half_size)
-    y_start = int(yc - half_size)
-    y_end = int(yc + half_size)
+    half_size = int(np.ceil(size_factor * radius))
+    crop_size = 2 * half_size
 
-    # Shift the crop instead of reducing its size near a boundary.
-    if x_start < 0:
-        x_end -= x_start
-        x_start = 0
+    crop_width = min(crop_size, width)
+    crop_height = min(crop_size, height)
 
-    if x_end > width:
-        x_start -= x_end - width
-        x_end = width
+    x_start = xc - half_size
+    y_start = yc - half_size
 
-    if y_start < 0:
-        y_end -= y_start
-        y_start = 0
+    x_start = min(max(x_start, 0), width - crop_width)
+    y_start = min(max(y_start, 0), height - crop_height)
 
-    if y_end > height:
-        y_start -= y_end - height
-        y_end = height
+    x_end = x_start + crop_width
+    y_end = y_start + crop_height
 
-    # Protect against a requested crop larger than the complete image.
-    x_start = max(0, x_start)
-    y_start = max(0, y_start)
+    cropped_img = img[:, y_start:y_end, x_start:x_end]
 
-    return img[:, y_start:y_end, x_start:x_end]
+    if return_origin:
+        return cropped_img, (x_start, y_start)
+
+    return cropped_img

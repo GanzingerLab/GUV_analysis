@@ -1,5 +1,6 @@
 # %% Imports
 import os
+import sys
 import csv
 from glob import glob
 import json
@@ -11,6 +12,15 @@ from bioio import BioImage
 from scipy.ndimage import uniform_filter1d
 import tifffile as tif
 from tqdm import tqdm
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "code"))
+
+from guv_analysis.background import background_correction, dilate_vesicle_mask, local_background, mask_all_vesicles
+from guv_analysis.io_tools import get_output_folder, load_membrane_positions_json, open_image, reorder_summary_columns, save_membrane_positions, save_shape_normalized_profiles
+from guv_analysis.membrane_detection import detect_noncircular_GUV
+from guv_analysis.plotting import plot_detected_guv_shape, plot_shape_normalized_profiles_crops_and_angles
+from guv_analysis.profiles import angular_profile_from_detected_shape, circular_rolling_average_linear_profiles, linear_profiles, normalized_radial_profile_from_detected_shape
+from guv_analysis.signal_quantification import localization_from_detected_shape
 
 # %% Global parameters and functions
 GUV_CH = 0
@@ -47,123 +57,6 @@ PLOT_RESULTS = True
 pixels_to_remove = 2
 size_central_area = 1 / 4
 
-#%%
-# Image loading and saving
-
-def load_membrane_positions_json(membrane_path):
-    """
-    Load detected membrane positions from one JSON file.
-
-    Returns
-    -------
-    source_file : str
-        Name of the original image file.
-
-    vesicles : dict
-        Dictionary where each key is a vesicle id and each value is a
-        NumPy array with shape:
-            num_angles x 2
-
-        Column 0 is x.
-        Column 1 is y.
-    """
-
-    with open(membrane_path, "r") as f:
-        membrane_data = json.load(f)
-
-    vesicles = {
-        vesicle_id: np.array(membrane_xy)
-        for vesicle_id, membrane_xy in membrane_data["vesicles"].items()
-    }
-
-    return membrane_data["source_file"], vesicles
-
-def save_shape_normalized_profiles(
-    output_folder,
-    image_path,
-    profiles_data
-):
-    """
-    Save shape-normalized radial and angular profiles for all GUVs in one source image.
-
-    The NPZ file contains:
-        radial profile per vesicle
-        angular profile per vesicle
-        normalized distance axis per vesicle
-    """
-
-    image_name = os.path.basename(image_path)
-    image_stem = os.path.splitext(image_name)[0]
-
-    profile_path = os.path.join(
-        output_folder,
-        f"{image_stem}_shape_normalized_profiles.npz"
-    )
-
-    np.savez_compressed(profile_path, **profiles_data)
-
-    return profile_path
-
-def save_membrane_positions(
-    output_folder,
-    image_path,
-    membrane_positions
-):
-    """
-    Save detected membrane positions for all GUVs in one source image.
-
-    The JSON contains one entry per vesicle id.
-    Each vesicle contains a list of [x, y] membrane coordinates.
-    """
-
-    image_name = os.path.basename(image_path)
-    image_stem = os.path.splitext(image_name)[0]
-
-    membrane_data = {
-        "source_file": image_name,
-        "vesicles": membrane_positions
-    }
-
-    membrane_path = os.path.join(
-        output_folder,
-        f"{image_stem}_membrane_positions.json"
-    )
-
-    with open(membrane_path, "w") as f:
-        json.dump(membrane_data, f, indent=4)
-
-    return membrane_path
-
-def reorder_summary_columns(results_df):
-    """
-    Reorder summary table columns so paths and main identifiers appear first.
-    """
-
-    first_columns = [
-        "image_path",
-        "membrane_position_file",
-        "profile_data_file",
-        "vesicle_id",
-        "xc",
-        "yc",
-        "radius",
-    ]
-
-    first_columns = [
-        col for col in first_columns
-        if col in results_df.columns
-    ]
-
-    other_columns = [
-        col for col in results_df.columns
-        if col not in first_columns
-    ]
-
-    results_df = results_df[
-        first_columns + other_columns
-    ]
-
-    return results_df
 # %% 1. Detect membrane positions and save JSON
 
 images = glob(os.path.join(PATH, "**", "*"+IMAGE_FORMAT), recursive=True)
@@ -186,6 +79,7 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images)):
     locs = pd.read_csv(csv_path, index_col=False).to_numpy()
 
     num_vesicles = len(locs[:, 0])
+    dilated_mask = dilate_vesicle_mask(mask_all_vesicles(img, locs))
     num_channels = img.shape[0]
 
     image_dim = np.array((img.shape[2], img.shape[1]))  # X, Y
@@ -203,7 +97,6 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images)):
         intensity_profiles, along_radius, theta, death_mark = linear_profiles(
             img,
             ves_coordinates,
-            image_dim,
             PARAMETERS_PROFILES
         )
 
@@ -236,22 +129,22 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images)):
         )
 
         # 4. Estimate local background using annulus around vesicle
-        background = background_noise(
+        background = local_background(
             img,
             ves_coordinates,
+            dilated_mask,
             inner_margin=INNER_MARGIN,
             outer_margin=OUTER_MARGIN
         )
 
         # 5. Background correction
         intensity_profiles_smooth_corrected = background_correction(
-            num_channels,
             intensity_profiles_smooth,
             background
         )
 
         # 6. Detect membrane shape from GUV channel using global smooth path
-        shape_x, shape_y, peak_positions, peak_found = detect_membrane_shape_dp(
+        shape_x, shape_y, peak_positions, peak_found = detect_noncircular_GUV(
             intensity_profiles_smooth=intensity_profiles_smooth_corrected,
             along_radius=along_radius_ori,
             theta=theta,
@@ -312,9 +205,9 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images)):
         )
 
         plot_detected_guv_shape(
-            channel_data=img[GUV_CH, :, :],
+            channels_data=img,
+            GUV_channel=GUV_CH,
             ves_coordinates=ves_coordinates,
-            image_dim=image_dim,
             shape_x=shape_x,
             shape_y=shape_y,
             size_view=SIZE_VIEW,
@@ -416,6 +309,7 @@ for membrane_path in tqdm(membrane_jsons):
         continue
 
     locs = pd.read_csv(csv_path, index_col=False).to_numpy()
+    dilated_mask = dilate_vesicle_mask(mask_all_vesicles(img, locs))
 
     num_channels = img.shape[0]
 
@@ -437,7 +331,6 @@ for membrane_path in tqdm(membrane_jsons):
         intensity_profiles, along_radius, theta, death_mark = linear_profiles(
             img,
             ves_coordinates,
-            image_dim,
             PARAMETERS_PROFILES
         )
 
@@ -454,16 +347,16 @@ for membrane_path in tqdm(membrane_jsons):
         )
 
         # 3. Estimate local background using annulus around vesicle
-        background = background_noise(
+        background = local_background(
             img,
             ves_coordinates,
+            dilated_mask,
             inner_margin=INNER_MARGIN,
             outer_margin=OUTER_MARGIN
         )
 
         # 4. Background correction
         intensity_profiles_smooth_corrected = background_correction(
-            num_channels,
             intensity_profiles_smooth,
             background
         )
@@ -483,23 +376,22 @@ for membrane_path in tqdm(membrane_jsons):
                 intensity_profiles=intensity_profiles_smooth_corrected,
                 along_radius=along_radius_ori,
                 peak_positions=peak_positions,
-                num_channels=num_channels
             )
         )
 
         # 6. Shape-normalized localization
-        localization_index, localization_channels, comment_loc, angular_profiles_normalized = (
-            localization_shape_normalized(
-                num_channels=num_channels,
-                normalized_profiles=normalized_profiles,
-                radial_profiles_normalized=radial_profiles_normalized,
-                normalized_distance_axis=normalized_distance_axis,
+        localization_index, localization_channels, comment_loc = (
+            localization_from_detected_shape(
+                intensity_profiles=intensity_profiles_smooth_corrected,
+                peak_positions=peak_positions,
                 membrane_norm_in=MEMBRANE_NORM_IN,
                 membrane_norm_out=MEMBRANE_NORM_OUT,
                 size_central_area=size_central_area,
                 guv_channel=GUV_CH
             )
         )
+
+        angular_profiles_normalized = angular_profile_from_detected_shape(intensity_profiles_smooth_corrected, along_radius_ori, peak_positions)
 
         profiles_data[f"ves{vesicle_id}_radial_profiles_normalized"] = radial_profiles_normalized
         profiles_data[f"ves{vesicle_id}_normalized_distance_axis"] = normalized_distance_axis
@@ -515,7 +407,6 @@ for membrane_path in tqdm(membrane_jsons):
         plot_shape_normalized_profiles_crops_and_angles(
             channels_data=img,
             ves_coordinates=ves_coordinates,
-            image_dim=image_dim,
             radial_profiles_normalized=radial_profiles_normalized,
             normalized_distance_axis=normalized_distance_axis,
             angular_profiles_normalized=angular_profiles_normalized,
@@ -537,7 +428,7 @@ for membrane_path in tqdm(membrane_jsons):
         }
 
         for ch in range(num_channels):
-            result_row[f"background_ch{ch}"] = background[0, ch]
+            result_row[f"background_ch{ch}"] = background[ch]
 
         for loc_value, ch in zip(localization_index, localization_channels):
             result_row[f"localization_ch{ch}"] = loc_value

@@ -1,5 +1,6 @@
 # %%
 import os
+import sys
 import csv
 from glob import glob
 
@@ -10,6 +11,15 @@ from bioio import BioImage
 from scipy.signal import find_peaks, peak_widths
 import tifffile as tif
 from tqdm import tqdm
+
+sys.path.append(os.path.join(os.path.dirname(__file__), "code"))
+
+from guv_analysis.background import background_correction, dilate_vesicle_mask, local_background, mask_all_vesicles
+from guv_analysis.io_tools import get_output_folder, open_image
+from guv_analysis.membrane_detection import detect_circular_GUV
+from guv_analysis.plotting import plot_profile_and_zoom, save_separate_profile_plots
+from guv_analysis.profiles import angular_profile, linear_profiles, radial_profile, trim_central_profiles
+from guv_analysis.signal_quantification import localization
 #%%
 # Parameters
 
@@ -29,18 +39,10 @@ OUTER_MARGIN = 2.0
 
 PARAMETERS_PROFILES = np.array((num_angles, length_excess, dr))
 
-PLOT_RESULTS = False
+PLOT_RESULTS = True
 
 pixels_to_remove = 2
 size_central_area = 1/4  # the central area radius (unit of measure: each vesicles' radius) considered during localization quantification
-#%%
-# Image loading and saving
-
-
-
-# =============================================================================
-# Analysis functions
-# =============================================================================
 #%%
 # Run analysis
 images = glob(os.path.join(PATH, "**", "*"+IMAGE_FORMAT), recursive=True)
@@ -65,6 +67,7 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images),):
     locs = pd.read_csv(csv_path, index_col=False).to_numpy()
 
     num_vesicles = len(locs[:, 0])
+    dilated_mask = dilate_vesicle_mask(mask_all_vesicles(img, locs))
     num_channels = img.shape[0]
 
     image_dim = np.array((img.shape[2], img.shape[1]))  # X, Y
@@ -75,7 +78,7 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images),):
         vesicle_id = ves_coordinates[0]
 
         # 1. Calculate linear profiles
-        intensity_profiles, along_radius, theta, death_mark = linear_profiles(img, ves_coordinates, image_dim, PARAMETERS_PROFILES)
+        intensity_profiles, along_radius, theta, death_mark = linear_profiles(img, ves_coordinates, PARAMETERS_PROFILES)
         intensity_profiles, along_radius = trim_central_profiles(intensity_profiles, along_radius, pixels_to_remove)
         # 2. Skip vesicles too close to the image border
         if death_mark:
@@ -97,27 +100,26 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images),):
             continue
 
         # 3. Estimate local background using annulus around vesicle
-        background = background_noise(
+        background = local_background(
             img,
             ves_coordinates,
+            dilated_mask,
             inner_margin=INNER_MARGIN,
             outer_margin=OUTER_MARGIN
         )
 
         # 4. Background correction
         intensity_profiles_corrected = background_correction(
-            num_channels,
             intensity_profiles,
             background
         )
 
         # 5. Calculate and correct radial profiles
         radial_profiles = radial_profile(
-            num_channels,
             intensity_profiles_corrected
         )
 
-        index_border_in, index_border_out, comment_peak, death_mark_peak = membrane_detection(radial_profiles[:,GUV_CH], locs[ves_i,3])
+        peak_index, index_border_in, index_border_out, comment_peak, death_mark_peak = detect_circular_GUV(radial_profiles[:,GUV_CH], locs[ves_i,3])
 
         ## Registration of the triggered conditions for automatic vesicle rejection:
         if comment_peak:
@@ -145,16 +147,15 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images),):
             continue
 
         # 6. Calculation of the angular profile of the vesicle under study:
-        angular_profiles = angular_profile(num_channels, intensity_profiles_corrected, index_border_in, index_border_out, pixels_to_remove)
+        angular_profiles = angular_profile(intensity_profiles_corrected, index_border_in, index_border_out)
         
         # 7. Quantification of protein localization on the membrane:
         localization_index, localization_channels, comment_loc = localization(
-                num_channels,
-                angular_profiles,
-                radial_profiles,
-                locs[ves_i, 3],
+                intensity_profiles_corrected,
+                peak_index,
+                index_border_in,
+                index_border_out,
                 size_central_area,
-                pixels_to_remove,
                 guv_channel=GUV_CH
             )
         if comment_loc:
@@ -171,7 +172,6 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images),):
             plot_profile_and_zoom(
                 channels_data=img,
                 ves_coordinates=ves_coordinates,
-                image_dim=image_dim,
                 radial_profiles=radial_profiles,
                 along_radius=along_radius,
                 angular_profiles=angular_profiles,
@@ -216,4 +216,4 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images),):
 print(f"\nDone. Results saved to:")
 
 results_df = pd.DataFrame(all_results)
-results_df.to_csv(os.path.join(PATH, 'results.csv'), index=False)
+results_df.to_csv(os.path.join(PATH, 'results_2.csv'), index=False)

@@ -9,12 +9,11 @@ from bioio import BioImage
 from scipy.signal import find_peaks, peak_widths
 import tifffile as tif
 from tqdm import tqdm
-from image import crop_around_guv
+from .image import crop_around_guv
 
 def plot_profile_and_zoom(
     channels_data,
     ves_coordinates,
-    image_dim,
     radial_profiles,
     along_radius,
     angular_profiles=None,
@@ -32,34 +31,33 @@ def plot_profile_and_zoom(
     """
 
     num_channels_to_show = len(channels)
-
-    if angular_profiles is None:
-        num_columns = 2
-    else:
-        num_columns = 3
+    num_columns = 2 if angular_profiles is None else 3
 
     fig, axes = plt.subplots(
         num_channels_to_show,
         num_columns,
-        figsize=(4 * num_columns, 3 * num_channels_to_show)
+        figsize=(4 * num_columns, 3 * num_channels_to_show),
     )
 
     if num_channels_to_show == 1:
         axes = np.array([axes])
 
-    for row, ch in enumerate(channels):
-        crop = crop_around_guv(
-            channels_data[ch, :, :],
-            size_view,
-            image_dim,
-            ves_coordinates
-        )
+    # Crop every channel using the same boundaries
+    cropped_channels = crop_around_guv(
+        channels_data,
+        size_view,
+        ves_coordinates,
+    )
 
-        axes[row, 0].imshow(crop, cmap="gray")
+    for row, ch in enumerate(channels):
+        axes[row, 0].imshow(cropped_channels[ch], cmap="gray")
         axes[row, 0].set_title(f"Channel {ch} crop")
         axes[row, 0].axis("off")
 
-        axes[row, 1].plot(along_radius, radial_profiles[:, ch])
+        axes[row, 1].plot(
+            along_radius,
+            radial_profiles[:, ch],
+        )
         axes[row, 1].set_title(f"Channel {ch} radial profile")
         axes[row, 1].set_xlabel("Distance from center (px)")
         axes[row, 1].set_ylabel("Intensity")
@@ -132,9 +130,9 @@ def save_separate_profile_plots(
 
 
 def plot_detected_guv_shape(
-    channel_data,
+    channels_data,
+    GUV_channel,
     ves_coordinates,
-    image_dim,
     shape_x,
     shape_y,
     size_view=1.5,
@@ -145,42 +143,17 @@ def plot_detected_guv_shape(
     """
     Plot the detected GUV shape on top of a cropped channel image.
     """
-
-    xc = ves_coordinates[1]
-    yc = ves_coordinates[2]
-    radius = ves_coordinates[3]
-
-    crop = crop_around_guv(
-        channel_data,
+    cropped_channels, (x_start, y_start) = crop_around_guv(
+        channels_data,
         size_view,
-        image_dim,
-        ves_coordinates
+        ves_coordinates,
+        return_origin=True,
     )
 
-    vesicle_box_side = int(size_view * radius)
+    crop = cropped_channels[GUV_channel]
 
-    move_right = 0
-    move_left = 0
-    move_up = 0
-    move_down = 0
-
-    if xc - vesicle_box_side < 0:
-        move_right = vesicle_box_side - xc
-
-    if xc + vesicle_box_side > image_dim[0]:
-        move_left = vesicle_box_side - (image_dim[0] - xc)
-
-    if yc - vesicle_box_side < 0:
-        move_down = vesicle_box_side - yc
-
-    if yc + vesicle_box_side > image_dim[1]:
-        move_up = vesicle_box_side - (image_dim[1] - yc)
-
-    x_min = int(xc - vesicle_box_side + move_right - move_left)
-    y_min = int(yc - vesicle_box_side + move_down - move_up)
-
-    shape_x_crop = shape_x - x_min
-    shape_y_crop = shape_y - y_min
+    shape_x_crop = shape_x - x_start
+    shape_y_crop = shape_y - y_start
 
     fig, ax = plt.subplots(figsize=(5, 5))
 
@@ -203,7 +176,6 @@ def plot_detected_guv_shape(
 def plot_shape_normalized_profiles_crops_and_angles(
     channels_data,
     ves_coordinates,
-    image_dim,
     radial_profiles_normalized,
     normalized_distance_axis,
     angular_profiles_normalized,
@@ -242,14 +214,15 @@ def plot_shape_normalized_profiles_crops_and_angles(
         angular_profiles_normalized.shape[0]
     )
 
+    cropped_channels = crop_around_guv(
+    channels_data,
+    size_view,
+    ves_coordinates,
+    )
+
     for row, ch in enumerate(channels):
 
-        crop = crop_around_guv(
-            channels_data[ch, :, :],
-            size_view,
-            image_dim,
-            ves_coordinates
-        )
+        crop = cropped_channels[ch]
 
         # Column 1: crop
         axes[row, 0].imshow(crop, cmap="gray")

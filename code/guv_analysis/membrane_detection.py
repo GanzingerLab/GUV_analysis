@@ -11,7 +11,7 @@ import tifffile as tif
 from tqdm import tqdm
 from scipy.ndimage import uniform_filter1d
 
-def membrane_detection(radial_profile_memb, radius):
+def detect_circular_GUV(radial_profile_memb, radius):
     """
     Detect the membrane inner and outer borders using width at half maximum.
     """
@@ -85,7 +85,7 @@ def membrane_detection(radial_profile_memb, radius):
     return peak_position , index_border_in, index_border_out, comments, False
 
 
-def detect_membrane_shape_dp(
+def detect_noncircular_GUV(
     intensity_profiles_smooth,
     along_radius,
     theta,
@@ -98,7 +98,7 @@ def detect_membrane_shape_dp(
     final_smoothing_window=7
 ):
     """
-    Detect the GUV membrane as a globally smooth radial path.
+    Detect the GUV membrane as a globally smooth radial path using dynamic programming.
 
     The selected membrane
     position is chosen by balancing:
@@ -285,7 +285,7 @@ def detect_membrane_shape_dp(
     peak_positions = radius_values[selected_candidate]
 
     # smooth contour
-    peak_positions = circular_smooth_peak_positions(
+    peak_positions = smooth_membrane_positions(
         peak_positions,
         window_size=final_smoothing_window
     )
@@ -299,7 +299,7 @@ def detect_membrane_shape_dp(
     return shape_x, shape_y, peak_positions, peak_found
 
 
-def circular_smooth_peak_positions(peak_positions, window_size=7):
+def smooth_membrane_positions(peak_positions, window_size=7):
     """
     Smooth detected membrane positions along the angular direction.
 

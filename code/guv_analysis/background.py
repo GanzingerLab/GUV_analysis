@@ -48,7 +48,7 @@ def mask_all_vesicles(img, detection):
 
     return mask
 
-def background_correction(num_channels, intensity_profiles, background):
+def background_correction(intensity_profiles, background):
     """ 
     Background correction of the intesity linear profiles. 
     
@@ -84,31 +84,29 @@ def background_correction(num_channels, intensity_profiles, background):
         Note: Data is stored as in the intensity_profiles array. 
               
     """
-    intensity_profiles_corrected = np.zeros_like(intensity_profiles)
+    return np.clip(
+        intensity_profiles - background[None, None, :],
+        0,
+        None,
+    )
 
-    for i in range(num_channels):
-        intensity_profiles_corrected[:, :, i] = np.clip(
-            intensity_profiles[:, :, i] - background[0, i],
-            0,
-            None
-        )
+def dilate_vesicle_mask(mask, iterations=3):
+    structure = np.ones((3, 3), dtype=bool)
+    return binary_dilation(mask, structure=structure, iterations=3)
 
-    return intensity_profiles_corrected
-
-def global_background(img, mask):
+def global_background(img, dilated_mask):
     """
     Estimate global background all pixels outside GUVs (mask indicates GUVs)
 
     Uses pixels between inner_margin * radius and outer_margin * radius.
     """
-    structure = np.ones((3, 3), dtype=bool)
-    dilated_mask = binary_dilation(mask, structure=structure, iterations=3)
+    
     return np.mean(img[:,~dilated_mask], axis=1)
 
 def local_background(
     img,
     ves_coordinates,
-    global_mask,
+    dilated_mask,
     inner_margin=1.2,
     outer_margin=2.0,  
 ):
@@ -124,9 +122,6 @@ def local_background(
     y, x = np.indices(img.shape[1:])
 
     distance = np.sqrt((x - xc) ** 2 + (y - yc) ** 2)
-
-    structure = np.ones((3, 3), dtype=bool)
-    dilated_mask = binary_dilation(global_mask, structure=structure, iterations=3)
 
     background_mask = (
         (distance >= inner_margin * radius)

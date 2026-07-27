@@ -377,3 +377,65 @@ def angular_profile(intensity_profiles, index_border_in, index_border_out):
     return np.mean(intensity_profiles[start:stop, :, :], axis=0)
 
 
+def angular_profile_from_detected_shape(
+    intensity_profiles,
+    along_radius,
+    peak_positions,
+    membrane_width=0.05,
+):
+    """
+    Calculate membrane intensity at each angle using the detected shape.
+
+    Input
+    ----------
+    intensity_profiles : np.ndarray
+        Linear profiles with shape
+        ``(radial_positions, angles, channels)``.
+
+    along_radius : np.ndarray
+        Radial distance axis.
+
+    peak_positions : np.ndarray
+        Detected membrane position for each angle.
+
+    membrane_width : float, default=0.05
+        Half-width of the membrane region, relative to the detected membrane
+        radius. For example, 0.05 averages from 0.95 to 1.05 times the
+        membrane position.
+
+    Output
+    -------
+    np.ndarray
+        Mean membrane intensity at each angle and channel, with shape
+        ``(angles, channels)``.
+    """
+    _, num_angles, num_channels = intensity_profiles.shape
+
+    angular_profile = np.full(
+        (num_angles, num_channels),
+        np.nan,
+        dtype=float,
+    )
+
+    for angle_i in range(num_angles):
+        membrane_distance = peak_positions[angle_i]
+
+        if np.isnan(membrane_distance) or membrane_distance <= 0:
+            continue
+
+        distance_normalized = along_radius / membrane_distance
+
+        membrane_mask = (
+            (distance_normalized >= 1 - membrane_width)
+            & (distance_normalized <= 1 + membrane_width)
+        )
+
+        if not np.any(membrane_mask):
+            continue
+
+        angular_profile[angle_i, :] = np.nanmean(
+            intensity_profiles[membrane_mask, angle_i, :],
+            axis=0,
+        )
+
+    return angular_profile
