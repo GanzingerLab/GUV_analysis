@@ -1,4 +1,5 @@
 import os
+import warnings
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -10,11 +11,61 @@ import json
 def open_czi(path):
     img_bio = BioImage(path)
     img = img_bio.get_image_data()
-    img, dims = squeeze_singleton_dims(img, img_bio.dims.order)
-    return img
+
+    img, dims = squeeze_singleton_dims(
+        img,
+        img_bio.dims.order,
+    )
+
+    pixel_size_um = None
+    #find pixel size in standard units (px/m), and transform to um. 
+    for element in img_bio.metadata.iter():
+        tag = element.tag.split("}")[-1]
+
+        if tag == "Distance" and element.attrib.get("Id") == "X":
+            for child in element:
+                child_tag = child.tag.split("}")[-1]
+
+                if child_tag == "Value" and child.text is not None:
+                    meters_per_pixel = float(child.text)
+                    pixel_size_um = meters_per_pixel * 1e6
+                    break
+
+        if pixel_size_um is not None:
+            break
+
+    if pixel_size_um is None:
+        warnings.warn(
+            f"No X pixel-size metadata found in {path}. "
+            "Using pixel_size_um = 1.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        pixel_size_um = 1.0
+
+    return img, pixel_size_um
 
 def open_tif(path):
-    return tif.imread(path)
+    with tif.TiffFile(path) as tif_file:
+        img = tif_file.asarray()
+
+        imagej_metadata = tif_file.imagej_metadata or {}
+        info = imagej_metadata.get("Info", "")
+
+        for line in info.splitlines():
+            if line.startswith("Scaling|Distance|Value #1"):
+                meters_per_pixel = float(line.split("=", 1)[1].strip())
+                pixel_size = meters_per_pixel * 1e6  # µm/pixel
+                return img, pixel_size
+
+    warnings.warn(
+        f"No pixel-size metadata found in {path}. "
+        "Using pixel_size = 1.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+    return img, 1.0
 
 def open_image(path):
     if path[-4:] == '.tif':
@@ -23,10 +74,10 @@ def open_image(path):
         return open_czi(path)
 
 def open_data(path, detection_suffix):
-    img = open_image(path)
+    img, pixel_size = open_image(path)
     img = ensure_channel_axis(img)
     detection = open_detection(path, detection_suffix)
-    return img, detection
+    return img, pixel_size, detection
 
 def ensure_channel_axis(img):
     if img.ndim == 2:

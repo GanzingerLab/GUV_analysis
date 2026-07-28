@@ -13,8 +13,6 @@ from scipy.ndimage import uniform_filter1d
 import tifffile as tif
 from tqdm import tqdm
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "code"))
-
 from guv_analysis.background import background_correction, dilate_vesicle_mask, local_background, mask_all_vesicles
 from guv_analysis.io_tools import get_output_folder, load_membrane_positions_json, open_image, reorder_summary_columns, save_membrane_positions, save_shape_normalized_profiles
 from guv_analysis.membrane_detection import detect_noncircular_GUV

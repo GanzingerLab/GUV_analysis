@@ -12,7 +12,7 @@ from tqdm import tqdm
 from scipy.interpolate import interp1d
 
 
-def linear_profiles(channels_data, ves_coordinates, parameters_profiles):
+def linear_profiles(channels_data, ves_coordinates, along_radius, theta, parameters_profiles):
     """
     Calculation of the multiple linear profiles for a single vesicle.
 
@@ -75,22 +75,13 @@ def linear_profiles(channels_data, ves_coordinates, parameters_profiles):
     yc = ves_coordinates[2]
     radius = ves_coordinates[3]
 
-    num_angles = int(parameters_profiles[0])
-    length_excess = parameters_profiles[1]
-    dr = parameters_profiles[2]
 
-    profile_radius_limit = length_excess * radius
-
-    # Create evenly spaced angles around the full circle.
-    # The angles are expressed in radians.
-    theta = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
-
-    # Create the sampling positions along each radial profile.
-    along_radius = np.arange(0, int(profile_radius_limit), dr)
+    profile_radius_limit = parameters_profiles.length_excess * radius
 
     profile_radius = len(along_radius)
 
     # Create an empty array with the expected output shape.
+    num_angles = len(theta)
     intensity_profiles = np.zeros((profile_radius, num_angles, num_channels))
 
     death_mark = False
@@ -104,7 +95,7 @@ def linear_profiles(channels_data, ves_coordinates, parameters_profiles):
     ):
         death_mark = True
 
-        return intensity_profiles, along_radius, theta, death_mark
+        return intensity_profiles, death_mark
 
     # Convert the radial positions into a column array.
     # Shape: (profile_radius, 1)
@@ -138,14 +129,10 @@ def linear_profiles(channels_data, ves_coordinates, parameters_profiles):
     # Move the channel dimension from the first position to the last position.
     intensity_profiles = np.moveaxis(intensity_profiles,  0, -1).astype(np.float64)
 
-    return intensity_profiles, along_radius, theta, death_mark
+    return intensity_profiles, death_mark
 
 
-def trim_central_profiles(
-    intensity_profiles,
-    along_radius,
-    pixels_to_remove,
-):
+def trim_central_profiles(intensity_profiles, pixels_to_remove,):
     """
     Remove unreliable radial samples near the vesicle center.
 
@@ -173,7 +160,7 @@ def trim_central_profiles(
     along_radius : np.ndarray
         Radial coordinates corresponding to the trimmed profiles.
     """
-    return intensity_profiles[pixels_to_remove:, :, :], along_radius[pixels_to_remove:]
+    return intensity_profiles[pixels_to_remove:, :, :]
 
 def circular_rolling_average_linear_profiles(intensity_profiles, window_size=5):
     """
@@ -439,3 +426,79 @@ def angular_profile_from_detected_shape(
         )
 
     return angular_profile
+
+def choose_num_angles(radius, target_arc_spacing=1.1, min_angles=120, max_angles=360):
+    """
+    Choose the number of angular profiles based on vesicle size.
+
+    The goal is to keep the spacing between neighboring angular profiles
+    approximately constant at the membrane.
+
+    Math
+    ----
+    If the vesicle is approximated as a circle with radius r, then the
+    membrane length is the circumference:
+
+        circumference = 2 * pi * r
+
+    If we extract N angular profiles around the vesicle, then the approximate
+    distance along the membrane between two neighboring profiles is:
+
+        arc_spacing = circumference / N
+
+    Therefore:
+
+        arc_spacing = 2 * pi * r / N
+
+    Here, we choose the desired arc spacing first. This is called
+    target_arc_spacing. Then we solve for N:
+
+        N = 2 * pi * r / target_arc_spacing
+
+    For example, if:
+
+        radius = 40 pixels
+        target_arc_spacing = 1.1 pixels
+
+    then:
+
+        N = 2 * pi * 40 / 1.1
+        N ≈ 229 angles
+
+    Smaller target_arc_spacing gives more angular profiles and more detail.
+    Larger target_arc_spacing gives fewer angular profiles and faster analysis.
+
+    Input
+    -----
+    radius : float
+        Approximate vesicle radius in pixels.
+
+    target_arc_spacing : float
+        Desired approximate spacing in pixels between neighboring angular
+        profiles at the membrane.
+
+    min_angles : int
+        Minimum allowed number of angular profiles.
+
+    max_angles : int
+        Maximum allowed number of angular profiles.
+
+    Returns
+    -------
+    num_angles : int
+        Number of angular profiles to use for this vesicle.
+    """
+
+    num_angles = int(
+        np.ceil(
+            2 * np.pi * radius / target_arc_spacing
+        )
+    )
+
+    num_angles = np.clip(
+        num_angles,
+        min_angles,
+        max_angles
+    )
+
+    return int(num_angles)

@@ -11,17 +11,26 @@ import tifffile as tif
 from tqdm import tqdm
 from scipy.ndimage import uniform_filter1d
 
-def detect_circular_GUV(radial_profile_memb, radius):
+def detect_circular_GUV(radial_profile_memb, radius, settings):
     """
     Detect the membrane inner and outer borders using width at half maximum.
     """
     comments = []
+    max_intensity = np.max(radial_profile_memb)
+    min_intensity = np.min(radial_profile_memb)
+    if max_intensity == min_intensity:
+        norm_radial_profile = np.zeros_like(
+            radial_profile_memb,
+            dtype=float,
+        )
+    else:
+        norm_radial_profile = (radial_profile_memb - min_intensity) / (max_intensity - min_intensity)
 
     peaks, _ = find_peaks(
-        radial_profile_memb,
-        height=10,
-        distance=5,
-        prominence=1,
+        norm_radial_profile,
+        height=settings.peak_height,
+        distance=settings.peak_distance,
+        prominence=settings.peak_prominence,
     )
 
     if peaks.size == 0:
@@ -35,7 +44,7 @@ def detect_circular_GUV(radial_profile_memb, radius):
     widths = peak_widths(
         radial_profile_memb,
         peaks,
-        rel_height=0.5,
+        rel_height=settings.width_relative_height,
     )
 
     chosen_peak = len(peaks) - 1
@@ -66,20 +75,13 @@ def detect_circular_GUV(radial_profile_memb, radius):
     index_border_in = int(np.rint(widths[2][chosen_peak]))
     index_border_out = int(np.rint(widths[3][chosen_peak]))
 
-    if index_border_out - index_border_in > radius / 4:
+    if index_border_out - index_border_in > radius * settings.wide_peak_fraction:
         comments.append("wide_peak")
 
-    if (
-        index_border_in > 0
-        and np.mean(radial_profile_memb[:index_border_in]) >= 0.3 * peak_height
-    ):
+    if (index_border_in > 0 and np.mean(radial_profile_memb[:index_border_in]) >= settings.inside_signal_fraction * peak_height):
         comments.append("high_int_inside")
 
-    if (
-        index_border_out < radial_profile_memb.size
-        and np.mean(radial_profile_memb[index_border_out:])
-        >= 0.4 * peak_height
-    ):
+    if (index_border_out < radial_profile_memb.size and np.mean(radial_profile_memb[index_border_out:]) >= settings.outside_signal_fraction * peak_height):
         comments.append("high_int_outisde")
 
     return peak_position , index_border_in, index_border_out, comments, False
@@ -203,9 +205,7 @@ def detect_noncircular_GUV(
     signal_max = np.nanmax(membrane_signal, axis=0, keepdims=True)
 
     #2. minmax normalization
-    signal_norm = (membrane_signal - signal_min) / (
-        signal_max - signal_min + 1e-12
-    )
+    signal_norm = (membrane_signal - signal_min) / (signal_max - signal_min + 1e-12)
 
     # create intensity cost: high signal should have low cost to be selected as membrane pixel.
     # it is done by changing the sign to the nornalized intnesity --> the more intense, the less

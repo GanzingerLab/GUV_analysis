@@ -92,7 +92,7 @@ def background_correction(intensity_profiles, background):
 
 def dilate_vesicle_mask(mask, iterations=3):
     structure = np.ones((3, 3), dtype=bool)
-    return binary_dilation(mask, structure=structure, iterations=3)
+    return binary_dilation(mask, structure=structure, iterations=iterations)
 
 def global_background(img, dilated_mask):
     """
@@ -103,13 +103,7 @@ def global_background(img, dilated_mask):
     
     return np.mean(img[:,~dilated_mask], axis=1)
 
-def local_background(
-    img,
-    ves_coordinates,
-    dilated_mask,
-    inner_margin=1.2,
-    outer_margin=2.0,  
-):
+def local_background(img, ves_coordinates, dilated_mask, inner_margin=1.2, outer_margin=2.0):
     """
     Estimate local background from an annulus around the vesicle.
 
@@ -129,9 +123,9 @@ def local_background(
         & (~dilated_mask)
     )
     if not np.any(background_mask):
-        raise ValueError(f"No background pixels found for vesicle {ves_coordinates[0]}")
+        raise ValueError("No background pixels")
     elif np.count_nonzero(background_mask) < 10:
-        raise ValueError(f"Too few background pixels for vesicle {ves_coordinates[0]}")
+        raise ValueError("Too few background")
         
 
     background = np.mean(img[:, background_mask], axis=1)

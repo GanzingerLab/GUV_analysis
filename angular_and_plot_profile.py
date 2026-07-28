@@ -12,8 +12,6 @@ from scipy.signal import find_peaks, peak_widths
 import tifffile as tif
 from tqdm import tqdm
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "code"))
-
 from guv_analysis.background import background_correction, dilate_vesicle_mask, local_background, mask_all_vesicles
 from guv_analysis.io_tools import get_output_folder, open_image
 from guv_analysis.membrane_detection import detect_circular_GUV
@@ -79,7 +77,7 @@ for image_i, image_path in tqdm(enumerate(images), total=len(images),):
 
         # 1. Calculate linear profiles
         intensity_profiles, along_radius, theta, death_mark = linear_profiles(img, ves_coordinates, PARAMETERS_PROFILES)
-        intensity_profiles, along_radius = trim_central_profiles(intensity_profiles, along_radius, pixels_to_remove)
+        intensity_profiles = trim_central_profiles(intensity_profiles, pixels_to_remove)
         # 2. Skip vesicles too close to the image border
         if death_mark:
             comment = ['margins']

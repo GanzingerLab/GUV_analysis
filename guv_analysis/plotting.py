@@ -9,7 +9,7 @@ from bioio import BioImage
 from scipy.signal import find_peaks, peak_widths
 import tifffile as tif
 from tqdm import tqdm
-from .image import crop_around_guv
+from .image_tools import crop_around_guv
 
 def plot_profile_and_zoom(
     channels_data,
