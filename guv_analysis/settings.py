@@ -36,7 +36,7 @@ class NonCircularMembraneSettings:
     profile_smoothing_window: int = 7
     contour_smoothing_window: int = 5
     smoothness_weight: float = 0.4
-    radius_prior_weight: float = 0.2
+    radius_prior_weight: float = 0.1
     min_radius_fraction: float = 0.35
     max_radius_fraction: float = 1.5
     max_single_jump_fraction: float = 0.10

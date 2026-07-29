@@ -15,7 +15,7 @@ from tqdm import tqdm
 from guv_analysis.background import background_correction, dilate_vesicle_mask, local_background
 from guv_analysis.io_tools import get_output_folder
 from guv_analysis.membrane_detection import detect_circular_GUV, detect_noncircular_GUV
-from guv_analysis.plotting import plot_profile_and_zoom, save_separate_profile_plots
+from guv_analysis.plotting import plot_profile_and_zoom, save_separate_profile_plots, plot_detected_guv_shape, plot_shape_normalized_profiles_crops_and_angles
 from guv_analysis.profiles import angular_profile, linear_profiles, radial_profile, trim_central_profiles, choose_num_angles, normalized_radial_profile_from_detected_shape, angular_profile_from_detected_shape
 from guv_analysis.signal_quantification import circular_membrane_localization, noncircular_membrane_localization, calculate_inside_intensity
 from guv_analysis.settings import AnalysisSettings
@@ -43,6 +43,7 @@ class MembraneDetectionResult:
 class GUVAnalysis:
     background: np.ndarray | None = None
     background_method: str | None = None
+    intensity_profiles_corrected: bool = False
 
     intensity_profiles: np.ndarray | None = None
     radial_profiles: np.ndarray | None = None
@@ -139,7 +140,13 @@ class GUV:
                 self.analysis.background_method = "global"
 
     def correct_intensity_profiles(self) -> None:
+        if self.analysis.intensity_profiles is None:
+            raise RuntimeError("Intensity profiles have not been calculated.")
+
+        if self.analysis.background is None:
+            raise RuntimeError("Background has not been set.")
         self.analysis.intensity_profiles = background_correction(self.analysis.intensity_profiles, self.analysis.background)
+        self.analysis.intensity_profiles_corrected = True
     def calculate_circular_radial_profile(self) -> None:
         self.analysis.radial_profiles = radial_profile(self.analysis.intensity_profiles)
     #TODO: normalize circular profiles
@@ -174,6 +181,8 @@ class GUV:
             self.analysis.intensity_profiles, self.along_radius, self.analysis.membrane.peak_radius_by_angle, self.settings.profiles.length_excess, number_radial_points)
 
     def calculate_circular_angular_profile(self) -> None: 
+        if self.death_mark:
+            return
         if self.analysis.intensity_profiles is None:
             raise RuntimeError("Intensity profiles have not been calculated.")
         if self.analysis.membrane.inner_border_index is None: 
@@ -189,7 +198,7 @@ class GUV:
             raise RuntimeError("Non-circular membrane not calculated.")
 
         self.analysis.noncircular_angular_profiles = angular_profile_from_detected_shape(
-            self.analysis.intensity_profiles, self.along_radius, self.analysis.membrane.peak_radius_by_angle, self.settings.noncircular_membrane_width_pixels)
+            self.analysis.intensity_profiles, self.along_radius, self.analysis.membrane.peak_radius_by_angle, self.settings.profiles.noncircular_membrane_width_pixels)
 
     def calculate_circular_membrane_localization(self) -> None:
         if self.analysis.intensity_profiles is None:
@@ -198,8 +207,8 @@ class GUV:
             raise RuntimeError("Circular membrane not calculated.")
         
         self.analysis.circular_memb_localization, comment = circular_membrane_localization(
-            self.analysis.intensity_profiles, self.analysis.membrane.peak_index, self.analysis.membrane.index_border_in, 
-            self.analysis.membrane.index_border_out, self.settings.localization.centre_size, self.settings.guv_ch)
+            self.analysis.intensity_profiles, self.analysis.membrane.peak_index, self.analysis.membrane.inner_border_index, 
+            self.analysis.membrane.outer_border_index, self.settings.localization.centre_size, self.settings.guv_ch)
         self.analysis.comments.extend(comment)
 
     def calculate_noncircular_membrane_localization(self) -> None:
@@ -210,21 +219,120 @@ class GUV:
         
         self.analysis.noncircular_memb_localization, comment = noncircular_membrane_localization(
             self.analysis.intensity_profiles, self.along_radius, self.analysis.membrane.peak_radius_by_angle, 
-            self.settings.noncircular_membrane_width_pixels, self.settings.localization.centre_size, self.settings.guv_ch)
+            self.settings.profiles.noncircular_membrane_width_pixels, self.settings.localization.centre_size, self.settings.guv_ch)
         self.analysis.comments.extend(comment)
 
     def calculate_circular_intensity(self) -> None:
-        detection = self.analysis.membrane
-        if detection.peak_radius is None:
-            raise RuntimeError("Circular membrane has not been detected.")
+        """Calculate mean intensity inside the detected circular GUV."""
+        if self.death_mark:
+            return
 
-        mask = circular_GUV_mask(self.image_view.image.shape[1:], self.xc, self.yc, detection.peak_radius)
+        detection = self.analysis.membrane
+        radius = detection.peak_radius
+
+        if radius is None or not np.isfinite(radius) or radius <= 0:
+            self.analysis.comments.append("invalid_circular_radius")
+            self.death_mark = True
+            return
+
+        mask = circular_GUV_mask(self.image_view.image.shape[1:], self.xc, self.yc, radius)
+
+        if not np.any(mask):
+            self.analysis.comments.append("empty_circular_mask")
+            self.death_mark = True
+            return
+
         _, self.analysis.circular_inside_intensity = calculate_inside_intensity(self.image_view.image, mask, self.analysis.background)
 
     def calculate_noncircular_intensity(self) -> None:
+        if self.death_mark:
+            return
         detection = self.analysis.membrane
         if detection.shape_x is None:
             raise RuntimeError("Noncircular membrane has not been detected.")
 
         mask = noncircular_GUV_mask(self.image_view.image.shape[1:], detection.shape_x, detection.shape_y)
         _, self.analysis.noncircular_inside_intensity = calculate_inside_intensity(self.image_view.image, mask, self.analysis.background)
+
+
+    def plot_circular_profiles(self, channels=(0, 1, 2), size_view=1.5, save_path=None, show=True) -> None:
+        """Plot the image crops and calculated circular radial and angular profiles."""
+        if self.analysis.radial_profiles is None:
+            raise RuntimeError("Circular radial profiles have not been calculated.")
+
+        plot_profile_and_zoom(self.image_view.image, self.ves_coordinates, self.analysis.radial_profiles, self.along_radius, angular_profiles=self.analysis.angular_profiles, size_view=size_view, channels=channels, save_path=save_path, show=show)
+
+    def plot_noncircular_profiles(self, channels=(0, 1, 2), size_view=1.5, save_path=None, show=True) -> None:
+        """Plot image crops and shape-normalized radial and angular profiles."""
+        if self.analysis.noncircular_radial_profiles is None or self.analysis.noncircular_normalized_along_radius is None:
+            print("Noncircular radial profiles have not been calculated.")
+            return
+
+        plot_shape_normalized_profiles_crops_and_angles(self.image_view.image, self.ves_coordinates, self.analysis.noncircular_radial_profiles, self.analysis.noncircular_normalized_along_radius, self.analysis.noncircular_angular_profiles, channels=channels, size_view=size_view, title=f"GUV {self.id} shape-normalized profiles", save_path=save_path, show=show)
+
+    def plot_circular_shape(self, size_view=1.5) -> None:
+        """Show the detected circular membrane over the membrane channel."""
+        detection = self.analysis.membrane
+        if detection.peak_radius is None:
+            raise RuntimeError("Circular membrane has not been detected.")
+
+        shape_x = self.xc + detection.peak_radius * np.cos(self.theta)
+        shape_y = self.yc + detection.peak_radius * np.sin(self.theta)
+        plot_detected_guv_shape(self.image_view.image, self.settings.guv_ch, self.ves_coordinates, shape_x, shape_y, size_view=size_view, title=f"GUV {self.id} circular membrane")
+
+    def plot_noncircular_shape(self, size_view=1.5, save_path=None, show=True) -> None:
+        """Plot the detected noncircular membrane contour over the membrane channel."""
+        detection = self.analysis.membrane
+
+        if detection.shape_x is None or detection.shape_y is None:
+            raise RuntimeError("Noncircular membrane has not been detected.")
+
+        plot_detected_guv_shape(self.image_view.image, self.settings.guv_ch, self.ves_coordinates, detection.shape_x, detection.shape_y, size_view=size_view, title=f"GUV {self.id} detected shape")
+
+    def run_circular_analysis(self) -> None:
+        """
+        Run the complete circular GUV analysis.
+
+        This calculates the circular radial profile, detects the circular membrane,
+        calculates the circular angular profile, membrane localization, and mean
+        intensity inside the detected circular GUV.
+        """
+        self._prepare_intensity_profiles()
+        self.calculate_circular_radial_profile()
+        self.detect_circular_membrane()
+        if self.death_mark:
+            return
+        self.calculate_circular_angular_profile()
+        self.calculate_circular_membrane_localization()
+        self.calculate_circular_intensity()
+
+    def run_noncircular_analysis(self) -> None:
+        """
+        Run the complete noncircular GUV analysis.
+
+        This detects the noncircular membrane using the circular membrane detection
+        as its initial estimate, calculates the shape-normalized radial and angular
+        profiles, membrane localization, and mean intensity inside the detected
+        noncircular GUV.
+        """
+        if self.analysis.membrane.peak_radius is None:
+            raise RuntimeError("Circular membrane detection must be completed before noncircular analysis.")
+        self._prepare_intensity_profiles()
+        self.detect_noncircular_membrane()
+        if self.death_mark:
+            return
+        self.calculate_normalized_noncircular_radial_profile()
+        self.calculate_noncircular_angular_profile()
+        self.calculate_noncircular_membrane_localization()
+        self.calculate_noncircular_intensity()
+
+    def _prepare_intensity_profiles(self) -> None:
+        """Calculate and background-correct the linear intensity profiles when needed."""
+        if self.analysis.intensity_profiles is None:
+            self.calculate_intensity_profiles()
+
+        if self.analysis.background is None:
+            self.set_background()
+
+        if not self.analysis.intensity_profiles_corrected:
+            self.correct_intensity_profiles()

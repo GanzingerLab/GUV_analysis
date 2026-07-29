@@ -129,48 +129,22 @@ def save_separate_profile_plots(
         plt.close(fig)
 
 
-def plot_detected_guv_shape(
-    channels_data,
-    GUV_channel,
-    ves_coordinates,
-    shape_x,
-    shape_y,
-    size_view=1.5,
-    title="Detected GUV shape",
-    save_path=None,
-    show=True
-):
-    """
-    Plot the detected GUV shape on top of a cropped channel image.
-    """
-    cropped_channels, (x_start, y_start) = crop_around_guv(
-        channels_data,
-        size_view,
-        ves_coordinates,
-        return_origin=True,
-    )
+def plot_detected_guv_shape(img, channel, ves_coordinates, shape_x, shape_y, size_view=1.5, title=None):
+    """Show a detected GUV membrane shape over the selected image channel."""
+    _, xc, yc, radius = ves_coordinates
+    view_radius = size_view * radius
+    x_min = max(0, int(xc - view_radius))
+    x_max = min(img.shape[2], int(xc + view_radius + 1))
+    y_min = max(0, int(yc - view_radius))
+    y_max = min(img.shape[1], int(yc + view_radius + 1))
 
-    crop = cropped_channels[GUV_channel]
-
-    shape_x_crop = shape_x - x_start
-    shape_y_crop = shape_y - y_start
-
-    fig, ax = plt.subplots(figsize=(5, 5))
-
-    ax.imshow(crop, cmap="gray")
-    ax.plot(shape_x_crop, shape_y_crop, ".", markersize=4, color="magenta")
-    ax.set_title(title)
-    ax.axis("off")
-
-    plt.tight_layout()
-
-    if save_path is not None:
-        fig.savefig(save_path, dpi=300, bbox_inches="tight")
-
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
+    plt.figure()
+    plt.imshow(img[channel, y_min:y_max, x_min:x_max], cmap="gray")
+    plt.plot(shape_x - x_min, shape_y - y_min)
+    plt.scatter(xc - x_min, yc - y_min, marker="+")
+    plt.title(title or "Detected GUV shape")
+    plt.axis("equal")
+    plt.show()
 
 
 def plot_shape_normalized_profiles_crops_and_angles(
