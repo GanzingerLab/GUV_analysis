@@ -32,11 +32,14 @@ class CircularMembraneSettings:
 
 @dataclass(frozen=True)
 class NonCircularMembraneSettings:
-    smoothness_weight: float = 0.15
+    profile_smoothing_window: int = 7
+    contour_smoothing_window: int = 5
+    smoothness_weight: float = 0.4
     radius_prior_weight: float = 0.01
     min_radius_fraction: float = 0.35
-    max_radius_fraction: float = 1.8
-    final_smoothing_window: int = 7
+    max_radius_fraction: float = 1.5
+    max_single_jump_fraction: float = 0.10
+    max_contour_variation_fraction: float = 0.03
 
 
 @dataclass(frozen=True)

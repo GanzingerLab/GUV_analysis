@@ -10,100 +10,152 @@ from scipy.signal import find_peaks, peak_widths
 import tifffile as tif
 from tqdm import tqdm
 from scipy.ndimage import uniform_filter1d
+from .profiles import circular_rolling_average_linear_profiles
 
-def detect_circular_GUV(radial_profile_memb, radius, settings):
+def detect_circular_GUV(radial_profile_memb, along_radius, radius, settings):
     """
-    Detect the membrane inner and outer borders using width at half maximum.
+    Detect the circular GUV membrane peak and its inner and outer borders.
+
+    The radial intensity profile is normalized before peak detection. When multiple
+    peaks are found, the outermost peak is selected initially, but a stronger nearby
+    inner peak can replace it when the outer peak lies beyond the approximate GUV radius.
+
+    Parameters
+    ----------
+    radial_profile_memb : np.ndarray
+        One-dimensional radial intensity profile of the membrane channel.
+
+    along_radius : np.ndarray
+        Radial distance corresponding to each element of `radial_profile_memb`.
+        It must have the same length as the radial profile.
+
+    radius : float
+        Approximate GUV radius in the same units as `along_radius`.
+
+    settings : CircularMembraneSettings
+        Settings controlling peak detection, peak-width measurement and membrane
+        quality checks.
+
+    Returns
+    -------
+    peak_radius : float
+        Radial distance of the selected membrane peak.
+
+    index_border_in : int
+        Array index of the inner membrane border.
+
+    index_border_out : int
+        Array index of the outer membrane border.
+
+    comments : list[str]
+        Quality-control comments generated during membrane detection.
+
+    death_mark : bool
+        True when no membrane peak could be detected.
     """
+
     comments = []
+
+    #normalize the radial profile between 0 and 1
     max_intensity = np.max(radial_profile_memb)
     min_intensity = np.min(radial_profile_memb)
+
     if max_intensity == min_intensity:
-        norm_radial_profile = np.zeros_like(
-            radial_profile_memb,
-            dtype=float,
-        )
+        norm_radial_profile = np.zeros_like(radial_profile_memb, dtype=float)
     else:
         norm_radial_profile = (radial_profile_memb - min_intensity) / (max_intensity - min_intensity)
 
-    peaks, _ = find_peaks(
-        norm_radial_profile,
-        height=settings.peak_height,
-        distance=settings.peak_distance,
-        prominence=settings.peak_prominence,
-    )
+    #detect candidate membrane peaks in the normalized radial profile
+    peaks, _ = find_peaks(norm_radial_profile, height=settings.peak_height, distance=settings.peak_distance, prominence=settings.peak_prominence)
 
+    #discard the GUV when no membrane peak is found
     if peaks.size == 0:
-        peak_position = 0
-        index_border_in  = 0
-        index_border_out = 0 
-        comment          = ["no_memb_peak"]
-        death_mark       = True
-        return peak_position, index_border_in, index_border_out, comment, death_mark
+        return np.nan, 0, 0, 0, ["no_memb_peak"], True
 
-    widths = peak_widths(
-        radial_profile_memb,
-        peaks,
-        rel_height=settings.width_relative_height,
-    )
+    #measure the width of each candidate peak at the configured relative height
+    widths = peak_widths(radial_profile_memb, peaks, rel_height=settings.width_relative_height)
 
+    #initially select the outermost detected peak
     chosen_peak = len(peaks) - 1
 
+    #compare the outermost peak with up to two neighboring inner peaks
     if len(peaks) > 1:
-        candidate_indices = range(
-            chosen_peak - 1,
-            max(-1, chosen_peak - 3),
-            -1,
-        )
+        candidate_indices = range(chosen_peak - 1, max(-1, chosen_peak - 3), -1)
 
         for candidate in candidate_indices:
-            chosen_position = peaks[chosen_peak]
-            candidate_position = peaks[candidate]
+            chosen_index = peaks[chosen_peak]
+            candidate_index = peaks[candidate]
+            chosen_radius = along_radius[chosen_index]
+            chosen_height = radial_profile_memb[chosen_index]
+            candidate_height = radial_profile_memb[candidate_index]
 
-            chosen_height = radial_profile_memb[chosen_position]
-            candidate_height = radial_profile_memb[candidate_position]
-
-            if chosen_position > radius and chosen_height < candidate_height:
+            #replace a weak peak outside the approximate radius with a stronger inner peak
+            if chosen_radius > radius and chosen_height < candidate_height:
                 chosen_peak = candidate
 
-        if chosen_peak > 0:  #if the selected peak is not 0, it means there are a lof of peaks inside the GUV --> confetti
+        #a selected peak other than the innermost peak indicates several internal peaks
+        if chosen_peak > 0:
             comments.append("confetti")
 
-    peak_position = peaks[chosen_peak]
-    peak_height = radial_profile_memb[peak_position]
+    #extract the selected peak index, physical radius and intensity
+    peak_index = peaks[chosen_peak]
+    peak_radius = interpolate_peak_radius(norm_radial_profile, along_radius, peak_index)
+    peak_height = radial_profile_memb[peak_index]
 
-    index_border_in = int(np.rint(widths[2][chosen_peak]))
-    index_border_out = int(np.rint(widths[3][chosen_peak]))
+    #extract the fractional inner and outer border positions returned by peak_widths
+    border_in_position = widths[2][chosen_peak]
+    border_out_position = widths[3][chosen_peak]
 
-    if index_border_out - index_border_in > radius * settings.wide_peak_fraction:
-        comments.append("wide_peak")
+    #convert the fractional border positions to radial distances for the width check
+    profile_indices = np.arange(radial_profile_memb.size)
+    border_in_radius = np.interp(border_in_position, profile_indices, along_radius)
+    border_out_radius = np.interp(border_out_position, profile_indices, along_radius)
+    membrane_width = border_out_radius - border_in_radius
 
-    if (index_border_in > 0 and np.mean(radial_profile_memb[:index_border_in]) >= settings.inside_signal_fraction * peak_height):
+    #convert the border positions to valid array indices for later profile indexing
+    index_border_in = int(np.clip(np.rint(border_in_position), 0, radial_profile_memb.size - 1))
+    index_border_out = int(np.clip(np.rint(border_out_position), 0, radial_profile_memb.size))
+
+    #flag a membrane peak that is too wide relative to the approximate GUV radius
+    if membrane_width > radius * settings.wide_peak_fraction:
+        comments.append("wide_membrane")
+
+    #flag high average intensity inside the inner membrane border
+    if index_border_in > 0 and np.mean(radial_profile_memb[:index_border_in]) >= settings.inside_signal_fraction * peak_height:
         comments.append("high_int_inside")
 
-    if (index_border_out < radial_profile_memb.size and np.mean(radial_profile_memb[index_border_out:]) >= settings.outside_signal_fraction * peak_height):
-        comments.append("high_int_outisde")
+    #flag high average intensity outside the outer membrane border
+    if index_border_out < radial_profile_memb.size and np.mean(radial_profile_memb[index_border_out:]) >= settings.outside_signal_fraction * peak_height:
+        comments.append("high_int_outside")
 
-    return peak_position , index_border_in, index_border_out, comments, False
+    return peak_radius, peak_index, index_border_in, index_border_out, comments, False
 
+def interpolate_peak_radius(radial_profile, along_radius, peak_index):
+    """Refine a discrete peak radius using a quadratic fit over five local samples."""
+    if peak_index < 2 or peak_index > radial_profile.size - 3:
+        return float(along_radius[peak_index])
 
-def detect_noncircular_GUV(
-    intensity_profiles_smooth,
-    along_radius,
-    theta,
-    ves_coordinates,
-    channel=0,
-    smoothness_weight=0.15,
-    radius_prior_weight=0.01,
-    min_radius_fraction=0.35,
-    max_radius_fraction=1.8,
-    final_smoothing_window=7
-):
+    x = along_radius[peak_index - 2:peak_index + 3]
+    y = radial_profile[peak_index - 2:peak_index + 3]
+    a, b, _ = np.polyfit(x, y, 2)
+
+    #a peak requires a downward-opening parabola
+    if a >= 0:
+        return float(along_radius[peak_index])
+
+    peak_radius = -b / (2 * a)
+
+    #reject fits whose maximum falls outside the local fitting region
+    if peak_radius < x[0] or peak_radius > x[-1]:
+        return float(along_radius[peak_index])
+
+    return float(peak_radius)
+
+def detect_noncircular_GUV(intensity_profiles, along_radius, theta, ves_coordinates, settings, channel=0):
     """
     Detect the GUV membrane as a globally smooth radial path using dynamic programming.
 
-    The selected membrane
-    position is chosen by balancing:
+    The selected membrane position is chosen by balancing:
         1. high membrane-channel intensity
         2. smoothness between neighboring angles
         3. weak preference for the approximate detected radius
@@ -112,8 +164,8 @@ def detect_noncircular_GUV(
 
     Input
     -----
-    intensity_profiles_smooth : np.ndarray
-        Smoothed intensity profiles with shape:
+    intensity_profiles : np.ndarray
+        Intensity profiles with shape:
             radial position x angle/profile index x channel
 
     along_radius : np.ndarray
@@ -129,25 +181,12 @@ def detect_noncircular_GUV(
             ves_coordinates[2] : yc
             ves_coordinates[3] : approximate radius
 
+    settings : NonCircularMembraneSettings
+        Settings used for profile smoothing, contour smoothing, path smoothness,
+        radius prior, and the allowed radial search range.
+
     channel : int
         Channel used for membrane detection.
-
-    smoothness_weight : float
-        Penalty for sudden changes in radius between neighboring angles.
-        Increase this to force a smoother contour.
-
-    radius_prior_weight : float
-        Weak penalty for being far from the approximate detected radius.
-        Keep this small for deformed GUVs.
-
-    min_radius_fraction : float
-        Minimum allowed radius relative to the approximate radius.
-
-    max_radius_fraction : float
-        Maximum allowed radius relative to the approximate radius.
-
-    final_smoothing_window : int
-        Circular smoothing window applied to the final detected radius sequence.
 
     Returns
     -------
@@ -169,6 +208,9 @@ def detect_noncircular_GUV(
     yc = ves_coordinates[2]
     approx_radius = ves_coordinates[3]
 
+    #smooth intensity profiles across neighboring angles
+    intensity_profiles_smooth = circular_rolling_average_linear_profiles(intensity_profiles, window_size=settings.profile_smoothing_window)
+
     #extract membrane channel
     profile_image = intensity_profiles_smooth[:, :, channel]
 
@@ -176,13 +218,9 @@ def detect_noncircular_GUV(
     num_radial, num_angles = profile_image.shape
 
     #define in what region of the profile we are searching for membrane position.
-    min_radius = min_radius_fraction * approx_radius
-    max_radius = max_radius_fraction * approx_radius
-
-    valid_radius = (
-        (along_radius >= min_radius)
-        & (along_radius <= max_radius)
-    )
+    min_radius = settings.min_radius_fraction * approx_radius
+    max_radius = settings.max_radius_fraction * approx_radius
+    valid_radius = (along_radius >= min_radius) & (along_radius <= max_radius)
 
     radial_indices = np.where(valid_radius)[0]
     radius_values = along_radius[radial_indices]
@@ -192,12 +230,20 @@ def detect_noncircular_GUV(
         shape_x = np.full(num_angles, np.nan)
         shape_y = np.full(num_angles, np.nan)
         peak_positions = np.full(num_angles, np.nan)
-        peak_found = np.full(num_angles, False)
-
-        return shape_x, shape_y, peak_positions, peak_found
-
+        mean_radius = np.nan
+        comments = ["insufficient_radial_range"]
+        return shape_x, shape_y, peak_positions, mean_radius, comments, True
     #Extract intensities in the allowed region
     membrane_signal = profile_image[radial_indices, :]
+
+
+    #Check is signal after normalization is high enough. 
+    valid_signal = np.nanmax(membrane_signal, axis=0) - np.nanmin(membrane_signal, axis=0)
+    if np.mean(valid_signal > settings.min_signal_range) < settings.min_valid_angle_fraction:
+        shape_x = np.full(num_angles, np.nan)
+        shape_y = np.full(num_angles, np.nan)
+        peak_positions = np.full(num_angles, np.nan)
+        return shape_x, shape_y, peak_positions, np.nan, ["insufficient_membrane_signal"], True
 
     # Normalize intensity independently for each angle.
     #1. Extract min and max
@@ -217,14 +263,12 @@ def detect_noncircular_GUV(
 
     # Update coste by adding the cost of the distance from the expected radius. The further away from the
     # expected radius, the more cost. It is done by multiplaying the distance by the given radius distance weigth.
-    node_cost = node_cost + radius_prior_weight * radius_prior[:, None]
+    node_cost = node_cost + settings.radius_prior_weight * radius_prior[:, None]
 
     # Create a 2D matrix where the value at [i, j] is the cost of changing
     # from radius_values[i] at one angle to radius_values[j] at the next angle.
     # Small radius changes have low cost; large jumps have high cost.
-    transition_cost = smoothness_weight * (
-        radius_values[:, None] - radius_values[None, :]
-    ) ** 2
+    transition_cost = settings.smoothness_weight * (radius_values[:, None] - radius_values[None, :]) ** 2
 
     #calculates number of possible radial positons
     num_candidates = len(radius_values)
@@ -242,29 +286,19 @@ def detect_noncircular_GUV(
 
     #for each angle (starting from  the second one)
     for angle_i in range(1, num_angles):
-
         # adds the cost of the previus angle + cost of jumping from the previous position tot he new
-        total_cost = (
-            cumulative_cost[:, angle_i - 1][:, None]
-            + transition_cost
-        )
+        total_cost = cumulative_cost[:, angle_i - 1][:, None] + transition_cost
 
         # For each possible current radius, store pixel position with the lowest cost from the previous angle.
         best_previous_candidate = np.argmin(total_cost, axis=0)
 
-        # Retrieve the corresponding minimum cost without searching twice.
-        best_previous_cost = total_cost[
-            best_previous_candidate,
-            np.arange(num_candidates)
-        ]
+        # Get the corresponding minimum cost.
+        best_previous_cost = total_cost[best_previous_candidate, np.arange(num_candidates)]
 
         backtrack[:, angle_i] = best_previous_candidate
 
         #store the best total cost for each candidate radius at the current angle.
-        cumulative_cost[:, angle_i] = (
-            node_cost[:, angle_i]
-            + best_previous_cost
-        )
+        cumulative_cost[:, angle_i] = node_cost[:, angle_i] + best_previous_cost
 
     #crate an array to select one pixel per angle
     selected_candidate = np.zeros(num_angles, dtype=int)
@@ -275,28 +309,41 @@ def detect_noncircular_GUV(
     #select following candidates from the last to the first pixel (becasue, again, it is cummulative)
     # Recover the full best membrane path by moving backward through angles.
     for angle_i in range(num_angles - 2, -1, -1):
-
         next_angle = angle_i + 1
         next_candidate = selected_candidate[next_angle]
-
         selected_candidate[angle_i] = backtrack[next_candidate, next_angle]
 
     # converts selected indices into real radial positions.
     peak_positions = radius_values[selected_candidate]
 
     # smooth contour
-    peak_positions = smooth_membrane_positions(
-        peak_positions,
-        window_size=final_smoothing_window
-    )
+    peak_positions = smooth_membrane_positions(peak_positions, window_size=settings.contour_smoothing_window)
 
     # Convert polar contour to XY coordinates
     shape_x = xc + peak_positions * np.cos(theta)
     shape_y = yc + peak_positions * np.sin(theta)
 
-    peak_found = np.full(num_angles, True)
+    comments = []
 
-    return shape_x, shape_y, peak_positions, peak_found
+    #calculate the detected mean radius to normalize contour changes independently of the approximate radius
+    mean_radius = np.mean(peak_positions)
+    #calculate the radius change between neighboring angles, including the jump from the last angle back to the first
+    radius_changes = np.diff(peak_positions, append=peak_positions[0])
+    #calculate the largest individual radius jump relative to the detected mean radius
+    max_jump_fraction = np.max(np.abs(radius_changes)) / mean_radius
+
+    #if one local jump is too large, flag a possible discontinuity in the detected contour
+    if max_jump_fraction > settings.max_single_jump_fraction:
+        comments.append("contour_jump")
+
+    #calculate how variable the angle-to-angle radius changes are relative to the detected mean radius
+    relative_contour_variation = np.std(radius_changes) / mean_radius
+
+    #if the radius changes are too inconsistent, flag the contour as irregular
+    if relative_contour_variation > settings.max_contour_variation_fraction:
+        comments.append("irregular_contour")
+
+    return shape_x, shape_y, peak_positions, mean_radius, comments, False
 
 
 def smooth_membrane_positions(peak_positions, window_size=7):
@@ -306,6 +353,19 @@ def smooth_membrane_positions(peak_positions, window_size=7):
     The angular coordinate is circular, so the first and last angles are treated
     as neighbors.
     """
+
+    window_size = int(window_size)
+
+    if window_size <= 1:
+        return peak_positions.copy()
+
+    if window_size > num_angles:
+        window_size = num_angles
+
+    if window_size % 2 == 0:
+        window_size -= 1
+        
+
 
     # Find valid peak positions
     valid = ~np.isnan(peak_positions)
@@ -323,30 +383,14 @@ def smooth_membrane_positions(peak_positions, window_size=7):
     valid_values = peak_positions[valid]
 
     # Extend the data so interpolation wraps around the circle
-    extended_index = np.concatenate([
-        valid_index - num_angles,
-        valid_index,
-        valid_index + num_angles
-    ])
+    extended_index = np.concatenate([valid_index - num_angles, valid_index, valid_index + num_angles])
 
-    extended_values = np.concatenate([
-        valid_values,
-        valid_values,
-        valid_values
-    ])
+    extended_values = np.concatenate([valid_values, valid_values, valid_values])
 
     # Fill missing peak positions
-    peak_positions_filled = np.interp(
-        angle_index,
-        extended_index,
-        extended_values
-    )
+    peak_positions_filled = np.interp(angle_index, extended_index, extended_values)
 
     # Smooth neighboring peak positions
-    peak_positions_smooth = uniform_filter1d(
-        peak_positions_filled,
-        size=window_size,
-        mode="wrap"
-    )
+    peak_positions_smooth = uniform_filter1d(peak_positions_filled, size=window_size, mode="wrap")
 
     return peak_positions_smooth

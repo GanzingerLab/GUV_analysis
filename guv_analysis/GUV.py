@@ -29,12 +29,14 @@ class MembraneDetectionResult:
     comments: list[str] = field(default_factory=list)
 
     peak_radius: float | None = None
+    peak_index: float | None = None
     inner_border_index: int | None = None
     outer_border_index: int | None = None
 
-    peak_positions: np.ndarray | None = None
+    peak_radius_by_angle: np.ndarray | None = None
     shape_x: np.ndarray | None = None
     shape_y: np.ndarray | None = None
+    mean_radius: float | None = None
     
 
 @dataclass
@@ -143,12 +145,23 @@ class GUV:
             raise RuntimeError("Circular radial profile has not been calculated.")
 
         detection= self.analysis.membrane
-        detection.peak_radius, detection.inner_border_index, detection.outer_border_index, comments, self.death_mark = detect_circular_GUV(self.analysis.radial_profiles, self.radius, self.settings.circular_membrane)
+        detection.peak_radius, detection.peak_index, detection.inner_border_index, detection.outer_border_index, comments, detection_failed = detect_circular_GUV(
+            self.analysis.radial_profiles[:,self.settings.guv_ch], self.along_radius, self.radius, self.settings.circular_membrane)
+        self.death_mark = self.death_mark or detection_failed
         self.analysis.comments.extend(comments)
         self.analysis.membrane = detection
 
-    # def detect_noncircular_membrane(self) -> None:
+    def detect_noncircular_membrane(self) -> None:
+        if self.analysis.intensity_profiles is None:
+                    raise RuntimeError("Intensity profiles have not been calculated.")
+        detection= self.analysis.membrane
+        detection.shape_x, detection.shape_y, detection.peak_radius_by_angle, detection.mean_radius, comments, detection_failed = detect_noncircular_GUV(
+            self.analysis.intensity_profiles, self.along_radius, self.theta, self.ves_coordinates, self.settings.noncircular_membrane, self.settings.guv_ch)
+        self.death_mark = self.death_mark or detection_failed
+        self.analysis.comments.extend(comments)
+        self.analysis.membrane = detection
 
+    
 
 
         
