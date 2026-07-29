@@ -197,10 +197,16 @@ def detect_noncircular_GUV(intensity_profiles, along_radius, theta, ves_coordina
         Y coordinates of the detected membrane shape.
 
     peak_positions : np.ndarray
-        Selected radial membrane position for each angle.
+        Selected radial membrane position for each original angle.
 
-    peak_found : np.ndarray
-        Boolean array. Here it is True for every angle in the optimized path.
+    mean_radius : float
+        Mean radius of the detected membrane.
+
+    comments : list
+        Quality-control comments associated with the detected contour.
+
+    detection_failed : bool
+        True when the membrane could not be detected.
     """
 
     #extract center and radius from DisGUVery
@@ -208,11 +214,27 @@ def detect_noncircular_GUV(intensity_profiles, along_radius, theta, ves_coordina
     yc = ves_coordinates[2]
     approx_radius = ves_coordinates[3]
 
+    #store original angles to return the contour at the original angular resolution
+    theta_original = theta.copy()
+    original_num_angles = len(theta_original)
+
     #smooth intensity profiles across neighboring angles
     intensity_profiles_smooth = circular_rolling_average_linear_profiles(intensity_profiles, window_size=settings.profile_smoothing_window)
 
     #extract membrane channel
     profile_image = intensity_profiles_smooth[:, :, channel]
+
+    #calculate the number of angular profiles used for non-circular detection 
+    # --> go to a spacing of 3 px. That helps identify larger jumps when GUVs are together. 
+    target_arc_spacing = 3.0
+    detection_num_angles = int(np.ceil(2 * np.pi * approx_radius / target_arc_spacing))
+    detection_num_angles = min(original_num_angles, np.clip(detection_num_angles, 80, 120))
+
+    #select evenly spaced angular profiles if more profiles are available than needed
+    if original_num_angles > detection_num_angles:
+        selected_angles = np.linspace(0, original_num_angles, detection_num_angles, endpoint=False).astype(int)
+        profile_image = profile_image[:, selected_angles]
+        theta = theta[selected_angles]
 
     #extract number of pixels in the profiles and the number of angles used
     num_radial, num_angles = profile_image.shape
@@ -227,23 +249,24 @@ def detect_noncircular_GUV(intensity_profiles, along_radius, theta, ves_coordina
 
     #if there are not enough pixels, discard GUV.
     if len(radial_indices) < 3:
-        shape_x = np.full(num_angles, np.nan)
-        shape_y = np.full(num_angles, np.nan)
-        peak_positions = np.full(num_angles, np.nan)
+        shape_x = np.full(original_num_angles, np.nan)
+        shape_y = np.full(original_num_angles, np.nan)
+        peak_positions = np.full(original_num_angles, np.nan)
         mean_radius = np.nan
         comments = ["insufficient_radial_range"]
         return shape_x, shape_y, peak_positions, mean_radius, comments, True
+
     #Extract intensities in the allowed region
     membrane_signal = profile_image[radial_indices, :]
 
+    #Check if enough angular profiles have signal above the estimated noise.
+    signal_range = np.nanmax(membrane_signal, axis=0) - np.nanmin(membrane_signal, axis=0)
+    radial_difference = np.diff(membrane_signal, axis=0)
+    noise_level = np.nanmedian(np.abs(radial_difference - np.nanmedian(radial_difference))) / 0.6745
 
-    #Check is signal after normalization is high enough. 
-    valid_signal = np.nanmax(membrane_signal, axis=0) - np.nanmin(membrane_signal, axis=0)
-    if np.mean(valid_signal > settings.min_signal_range) < settings.min_valid_angle_fraction:
-        shape_x = np.full(num_angles, np.nan)
-        shape_y = np.full(num_angles, np.nan)
-        peak_positions = np.full(num_angles, np.nan)
-        return shape_x, shape_y, peak_positions, np.nan, ["insufficient_membrane_signal"], True
+    if np.mean(signal_range > 3 * max(noise_level, 1e-12)) < 0.5:
+        empty = np.full(original_num_angles, np.nan)
+        return empty.copy(), empty.copy(), empty, np.nan, ["insufficient_membrane_signal"], True
 
     # Normalize intensity independently for each angle.
     #1. Extract min and max
@@ -254,39 +277,50 @@ def detect_noncircular_GUV(intensity_profiles, along_radius, theta, ves_coordina
     signal_norm = (membrane_signal - signal_min) / (signal_max - signal_min + 1e-12)
 
     # create intensity cost: high signal should have low cost to be selected as membrane pixel.
-    # it is done by changing the sign to the nornalized intnesity --> the more intense, the less
+    # it is done by changing the sign to the normalized intensity --> the more intense, the less
     # the cost to be selected.
     node_cost = -signal_norm
 
-    # calculate distance from expected DisGUVery radius
-    radius_prior = ((radius_values - approx_radius) / approx_radius) ** 2
+    # calculate distance from the expected DisGUVery radius
+    radius_deviation = radius_values - approx_radius
 
-    # Update coste by adding the cost of the distance from the expected radius. The further away from the
-    # expected radius, the more cost. It is done by multiplaying the distance by the given radius distance weigth.
+    # calculate the largest possible distance within the allowed search range
+    max_radius_deviation = max(approx_radius - min_radius, max_radius - approx_radius)
+
+    # normalize and square the distance, giving 0 at the expected radius and 1 at the furthest boundary
+    radius_prior = (radius_deviation / max_radius_deviation) ** 2
+
+    # add the weighted radius penalty to the intensity cost
     node_cost = node_cost + settings.radius_prior_weight * radius_prior[:, None]
 
     # Create a 2D matrix where the value at [i, j] is the cost of changing
     # from radius_values[i] at one angle to radius_values[j] at the next angle.
     # Small radius changes have low cost; large jumps have high cost.
-    transition_cost = settings.smoothness_weight * (radius_values[:, None] - radius_values[None, :]) ** 2
+    relative_jump = (radius_values[:, None] - radius_values[None, :]) / approx_radius
 
-    #calculates number of possible radial positons
+    # define the relative jump size that should give a normalized penalty of 1
+    reference_jump = settings.max_single_jump_fraction
+
+    # calculate the weighted smoothness cost between neighboring angles
+    transition_cost = settings.smoothness_weight * (relative_jump / reference_jump) ** 4
+
+    #calculates number of possible radial positions
     num_candidates = len(radius_values)
 
-    #intiates 2 matrices the dimensions num of possible radial positiobs X num of angles used:
-    #cummulative cost: stores cummulative cost for each allowed pixel for each angle
+    #initiates 2 matrices with dimensions number of possible radial positions X number of angles used:
+    #cumulative cost: stores cumulative cost for each allowed pixel for each angle
     cumulative_cost = np.zeros((num_candidates, num_angles))
 
     #backtrack: stores which previous candidate radius has been chosen.
     backtrack = np.zeros((num_candidates, num_angles), dtype=int)
 
-    #since nothing has been chosen yet, no penalty for the distance to the previus pixel has been added.
-    # So, it it the cost of the intensity + cost of distance to expected radius.
+    #since nothing has been chosen yet, no penalty for the distance to the previous pixel has been added.
+    # So, it is the cost of the intensity + cost of distance to expected radius.
     cumulative_cost[:, 0] = node_cost[:, 0]
 
-    #for each angle (starting from  the second one)
+    #for each angle (starting from the second one)
     for angle_i in range(1, num_angles):
-        # adds the cost of the previus angle + cost of jumping from the previous position tot he new
+        # adds the cost of the previous angle + cost of jumping from the previous position to the new
         total_cost = cumulative_cost[:, angle_i - 1][:, None] + transition_cost
 
         # For each possible current radius, store pixel position with the lowest cost from the previous angle.
@@ -300,13 +334,13 @@ def detect_noncircular_GUV(intensity_profiles, along_radius, theta, ves_coordina
         #store the best total cost for each candidate radius at the current angle.
         cumulative_cost[:, angle_i] = node_cost[:, angle_i] + best_previous_cost
 
-    #crate an array to select one pixel per angle
+    #create an array to select one pixel per angle
     selected_candidate = np.zeros(num_angles, dtype=int)
 
-    #Since we calculate commulative cost, the last angle candidate is the one with the lowest cummulative cost
+    #Since we calculate cumulative cost, the last angle candidate is the one with the lowest cumulative cost
     selected_candidate[-1] = np.argmin(cumulative_cost[:, -1])
 
-    #select following candidates from the last to the first pixel (becasue, again, it is cummulative)
+    #select following candidates from the last to the first pixel
     # Recover the full best membrane path by moving backward through angles.
     for angle_i in range(num_angles - 2, -1, -1):
         next_angle = angle_i + 1
@@ -314,21 +348,19 @@ def detect_noncircular_GUV(intensity_profiles, along_radius, theta, ves_coordina
         selected_candidate[angle_i] = backtrack[next_candidate, next_angle]
 
     # converts selected indices into real radial positions.
-    peak_positions = radius_values[selected_candidate]
+    peak_positions_detection = radius_values[selected_candidate]
 
     # smooth contour
-    peak_positions = smooth_membrane_positions(peak_positions, window_size=settings.contour_smoothing_window)
-
-    # Convert polar contour to XY coordinates
-    shape_x = xc + peak_positions * np.cos(theta)
-    shape_y = yc + peak_positions * np.sin(theta)
+    peak_positions_detection = smooth_membrane_positions(peak_positions_detection, window_size=settings.contour_smoothing_window)
 
     comments = []
 
     #calculate the detected mean radius to normalize contour changes independently of the approximate radius
-    mean_radius = np.mean(peak_positions)
+    mean_radius = np.mean(peak_positions_detection)
+
     #calculate the radius change between neighboring angles, including the jump from the last angle back to the first
-    radius_changes = np.diff(peak_positions, append=peak_positions[0])
+    radius_changes = np.diff(peak_positions_detection, append=peak_positions_detection[0])
+
     #calculate the largest individual radius jump relative to the detected mean radius
     max_jump_fraction = np.max(np.abs(radius_changes)) / mean_radius
 
@@ -343,6 +375,13 @@ def detect_noncircular_GUV(intensity_profiles, along_radius, theta, ves_coordina
     if relative_contour_variation > settings.max_contour_variation_fraction:
         comments.append("irregular_contour")
 
+    #interpolate the detected positions back to the original angular resolution
+    peak_positions = np.interp(theta_original, theta, peak_positions_detection, period=2 * np.pi)
+
+    # Convert polar contour to XY coordinates
+    shape_x = xc + peak_positions * np.cos(theta_original)
+    shape_y = yc + peak_positions * np.sin(theta_original)
+
     return shape_x, shape_y, peak_positions, mean_radius, comments, False
 
 
@@ -353,6 +392,10 @@ def smooth_membrane_positions(peak_positions, window_size=7):
     The angular coordinate is circular, so the first and last angles are treated
     as neighbors.
     """
+
+    # Create angle indices
+    num_angles = len(peak_positions)
+    angle_index = np.arange(num_angles)
 
     window_size = int(window_size)
 
@@ -374,9 +417,7 @@ def smooth_membrane_positions(peak_positions, window_size=7):
     if np.sum(valid) < 3:
         return peak_positions
 
-    # Create angle indices
-    num_angles = len(peak_positions)
-    angle_index = np.arange(num_angles)
+    
 
     # Keep only valid positions
     valid_index = angle_index[valid]

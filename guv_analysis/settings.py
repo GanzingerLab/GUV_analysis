@@ -17,6 +17,7 @@ class ProfileSettings:
     length_excess: float = 1.5
     smoothing_window: int = 5
     pixels_to_remove: int = 2
+    noncircular_membrane_width_pixels: int = 3
 
 
 @dataclass(frozen=True)
@@ -35,7 +36,7 @@ class NonCircularMembraneSettings:
     profile_smoothing_window: int = 7
     contour_smoothing_window: int = 5
     smoothness_weight: float = 0.4
-    radius_prior_weight: float = 0.01
+    radius_prior_weight: float = 0.2
     min_radius_fraction: float = 0.35
     max_radius_fraction: float = 1.5
     max_single_jump_fraction: float = 0.10
@@ -44,7 +45,7 @@ class NonCircularMembraneSettings:
 
 @dataclass(frozen=True)
 class LocalizationSettings:
-    membrane_margin: int = 0
+    centre_size: int = 0.25
 
 
 @dataclass(frozen=True)

@@ -10,14 +10,7 @@ from scipy.signal import find_peaks, peak_widths
 import tifffile as tif
 from tqdm import tqdm
 
-def localization(
-    intensity_profiles,
-    peak_index,
-    index_border_in,
-    index_border_out,
-    size_central_area,
-    guv_channel=0,
-):
+def circular_membrane_localization(intensity_profiles, peak_index, index_border_in, index_border_out, size_central_area, guv_channel=0):
     """
     Quantify membrane localization for all non-GUV channels.
 
@@ -102,19 +95,12 @@ def localization(
             # Localization cannot be normalized by a non-positive membrane signal.
             comment.append(f"zero_median_ch{ch}")
 
-    return localization_index, localization_channels, comment
+    localization = {int(ch): float(value) for ch, value in zip(localization_channels, localization_index)}
+    return localization, comment
 
-def localization_from_detected_shape(
-    intensity_profiles,
-    peak_positions,
-    membrane_norm_in=0.95,
-    membrane_norm_out=1.05,
-    size_central_area=0.25,
-    guv_channel=0,
-):
+def noncircular_membrane_localization(intensity_profiles, along_radius, peak_radius_by_angle, membrane_width_samples=5, size_central_area=0.25, guv_channel=0):
     """
-    Quantify membrane localization using one detected membrane position
-    per angle.
+    Quantify membrane localization using one detected membrane radius per angle.
 
     Both membrane and central intensities are calculated directly from the
     corrected, trimmed intensity profiles.
@@ -125,23 +111,21 @@ def localization_from_detected_shape(
         Corrected and trimmed profiles with shape
         ``(radial_positions, angles, channels)``.
 
-    peak_positions : np.ndarray
-        Detected membrane radial index for each angle. Missing detections
-        may be represented by ``np.nan``.
+    along_radius : np.ndarray
+        Radial distance corresponding to the first axis of
+        ``intensity_profiles``.
 
-    membrane_norm_in : float, optional
-        Inner membrane boundary relative to the detected membrane position.
-        For example, 0.95 selects positions starting at 95% of the local
-        membrane radius.
+    peak_radius_by_angle : np.ndarray
+        Detected membrane radius for each angle. Missing detections may be
+        represented by ``np.nan``.
 
-    membrane_norm_out : float, optional
-        Outer membrane boundary relative to the detected membrane position.
-        For example, 1.05 selects positions up to 105% of the local
-        membrane radius.
+    membrane_width_samples : int, optional
+        Odd number of radial samples averaged around each detected membrane
+        position. For example, 5 uses the closest membrane sample and 2 samples
+        on each side.
 
     size_central_area : float, optional
-        Size of the central region as a fraction of the local membrane
-        position.
+        Size of the central region as a fraction of the local membrane radius.
 
     guv_channel : int, optional
         Membrane-marker channel, excluded from localization quantification.
@@ -154,96 +138,57 @@ def localization_from_detected_shape(
     localization_channels : np.ndarray
         Channel indices corresponding to ``localization_index``.
 
-    comment : list of str
+    comments : list[str]
         Quality-control comments.
     """
     num_radial_positions, num_angles, num_channels = intensity_profiles.shape
 
-    if len(peak_positions) != num_angles:
-        raise ValueError(
-            "peak_positions must contain one membrane position per angle."
-        )
+    if along_radius.size != num_radial_positions:
+        raise ValueError("along_radius must match the radial dimension of intensity_profiles.")
+
+    if peak_radius_by_angle.size != num_angles:
+        raise ValueError("peak_radius_by_angle must contain one membrane radius per angle.")
+
+    if membrane_width_samples < 1 or membrane_width_samples % 2 == 0:
+        raise ValueError("membrane_width_samples must be a positive odd number.")
 
     if not 0 <= guv_channel < num_channels:
         raise ValueError("guv_channel is outside the available channel range.")
 
-    if membrane_norm_in >= membrane_norm_out:
-        raise ValueError(
-            "membrane_norm_in must be smaller than membrane_norm_out."
-        )
+    localization_channels = np.delete(np.arange(num_channels), guv_channel)
+    angular_membrane_signal = np.full((num_angles, len(localization_channels)), np.nan, dtype=float)
+    angular_centre_signal = np.full((num_angles, len(localization_channels)), np.nan, dtype=float)
+    half_width = membrane_width_samples // 2
 
-    localization_channels = np.delete(
-        np.arange(num_channels),
-        guv_channel,
-    )
-
-    radial_indices = np.arange(num_radial_positions)
-
-    # Store one membrane and centre value per angle and protein channel
-    angular_membrane_signal = np.full(
-        (num_angles, len(localization_channels)),
-        np.nan,
-        dtype=float,
-    )
-
-    angular_centre_signal = np.full(
-        (num_angles, len(localization_channels)),
-        np.nan,
-        dtype=float,
-    )
-
-    for angle_i in range(num_angles):
-        membrane_position = peak_positions[angle_i]
-
+    for angle_i, membrane_radius in enumerate(peak_radius_by_angle):
         # Skip angles without a valid membrane detection
-        if np.isnan(membrane_position) or membrane_position <= 0:
+        if np.isnan(membrane_radius) or membrane_radius <= 0:
             continue
 
-        # Select a band around the local membrane position
-        membrane_mask = (
-            (radial_indices >= membrane_norm_in * membrane_position)
-            & (radial_indices <= membrane_norm_out * membrane_position)
-        )
+        # Find the radial sample closest to the detected membrane radius
+        peak_index = np.argmin(np.abs(along_radius - membrane_radius))
 
-        # Select the central region relative to the local membrane position
-        centre_mask = (
-            radial_indices <= size_central_area * membrane_position
-        )
+        # Select the same number of radial samples inside and outside the membrane
+        start_index = peak_index - half_width
+        end_index = peak_index + half_width + 1
 
-        if np.any(membrane_mask):
-            membrane_values = intensity_profiles[
-                membrane_mask,
-                angle_i,
-                :,
-            ][:, localization_channels]
+        # Skip angles where the complete requested membrane window does not fit
+        if start_index < 0 or end_index > num_radial_positions:
+            continue
 
-            angular_membrane_signal[angle_i, :] = np.mean(
-                membrane_values,
-                axis=0,
-            )
+        # Select the central region relative to the local membrane radius
+        centre_mask = along_radius <= size_central_area * membrane_radius
+
+        membrane_values = intensity_profiles[start_index:end_index, angle_i, :][:, localization_channels]
+        angular_membrane_signal[angle_i, :] = np.mean(membrane_values, axis=0)
 
         if np.any(centre_mask):
-            centre_values = intensity_profiles[
-                centre_mask,
-                angle_i,
-                :,
-            ][:, localization_channels]
-
-            angular_centre_signal[angle_i, :] = np.mean(
-                centre_values,
-                axis=0,
-            )
+            centre_values = intensity_profiles[centre_mask, angle_i, :][:, localization_channels]
+            angular_centre_signal[angle_i, :] = np.mean(centre_values, axis=0)
 
     # Combine measurements from all valid angles
-    membrane_signal = np.nanmedian(
-        angular_membrane_signal,
-        axis=0,
-    )
-
-    centre_signal = np.nanmean(
-        angular_centre_signal,
-        axis=0,
-    )
+    membrane_signal = np.nanmedian(angular_membrane_signal, axis=0)
+    centre_signal = np.nanmean(angular_centre_signal, axis=0)
 
     localization_index = np.divide(
         membrane_signal - centre_signal,
@@ -253,11 +198,7 @@ def localization_from_detected_shape(
     )
 
     # Measure variation of membrane intensity around the GUV
-    mean_angular_signal = np.nanmean(
-        angular_membrane_signal,
-        axis=0,
-    )
-
+    mean_angular_signal = np.nanmean(angular_membrane_signal, axis=0)
     rsd = np.divide(
         np.nanstd(angular_membrane_signal, axis=0),
         mean_angular_signal,
@@ -265,21 +206,50 @@ def localization_from_detected_shape(
         where=mean_angular_signal > 0,
     )
 
-    comment = []
+    comments = []
 
-    for ch, mean_signal, median_signal, channel_rsd in zip(
-        localization_channels,
-        mean_angular_signal,
-        membrane_signal,
-        rsd,
-    ):
+    for ch, mean_signal, median_signal, channel_rsd in zip(localization_channels, mean_angular_signal, membrane_signal, rsd):
         if mean_signal <= 0 or np.isnan(mean_signal):
-            comment.append(f"zero_mean_ch{ch}")
+            comments.append(f"zero_mean_ch{ch}")
 
         if not np.isnan(channel_rsd) and channel_rsd > 0.8:
-            comment.append(f"high_angular_variation_ch{ch}")
+            comments.append(f"high_angular_variation_ch{ch}")
 
         if median_signal <= 0 or np.isnan(median_signal):
-            comment.append(f"zero_median_ch{ch}")
+            comments.append(f"zero_median_ch{ch}")
 
-    return localization_index, localization_channels, comment
+    localization = {int(ch): float(value) for ch, value in zip(localization_channels, localization_index)}
+    return localization, comments
+
+def calculate_inside_intensity(img, mask, background):
+    """
+    Calculate raw and background-corrected mean intensities inside a GUV mask.
+
+    Parameters
+    ----------
+    img : np.ndarray
+        Image with shape ``(channels, height, width)``.
+
+    mask : np.ndarray
+        Two-dimensional boolean mask defining the GUV interior.
+
+    background : np.ndarray
+        Background intensity for each image channel.
+
+    Returns
+    -------
+    raw_intensity : np.ndarray
+        Mean raw intensity inside the mask for every channel.
+
+    corrected_intensity : np.ndarray
+        Mean intensity inside the mask after background subtraction.
+    """
+    if mask.shape != img.shape[1:]:
+        raise ValueError("mask must match the image height and width.")
+
+    if not np.any(mask):
+        raise ValueError("GUV mask contains no pixels.")
+
+    raw_intensity = np.mean(img[:, mask], axis=1)
+    corrected_intensity = raw_intensity - background
+    return raw_intensity, corrected_intensity

@@ -228,13 +228,7 @@ def radial_profile(intensity_profiles):
     return np.mean(intensity_profiles, axis=1)
 
 
-def normalized_radial_profile_from_detected_shape(
-    intensity_profiles,
-    along_radius,
-    peak_positions,
-    max_normalized_distance=1.5,
-    num_normalized_points=100,
-):
+def normalized_radial_profile_from_detected_shape(intensity_profiles, along_radius, peak_positions, max_normalized_distance=1.5, num_normalized_points=100):
     """
     Calculate normalized radial profiles using angle-specific membrane positions.
 
@@ -287,9 +281,7 @@ def normalized_radial_profile_from_detected_shape(
     valid_peak_positions = (~np.isnan(peak_positions) & (peak_positions > 0))
 
     if not np.any(valid_peak_positions):
-        raise ValueError(
-            "No valid peak positions found for normalization."
-        )
+        raise ValueError("No valid peak positions found for normalization.")
 
     # Shared axis used for every normalized angular profile
     normalized_distance_axis = np.linspace(0, max_normalized_distance, num_normalized_points)
@@ -315,19 +307,13 @@ def normalized_radial_profile_from_detected_shape(
             fill_value=np.nan,
         )
 
-        normalized_profiles[:, angle_i, :] = interpolator(
-            normalized_distance_axis
-        )
+        normalized_profiles[:, angle_i, :] = interpolator(normalized_distance_axis)
 
     # Average the aligned profiles over angle
-    radial_profiles_normalized = np.nanmean(
-        normalized_profiles,
-        axis=1,
-    )
+    radial_profiles_normalized = np.nanmean(normalized_profiles, axis=1)
 
     return radial_profiles_normalized, normalized_distance_axis, normalized_profiles
     
-
 
 def angular_profile(intensity_profiles, index_border_in, index_border_out):
     """
@@ -364,68 +350,60 @@ def angular_profile(intensity_profiles, index_border_in, index_border_out):
     return np.mean(intensity_profiles[start:stop, :, :], axis=0)
 
 
-def angular_profile_from_detected_shape(
-    intensity_profiles,
-    along_radius,
-    peak_positions,
-    membrane_width=0.05,
-):
+def angular_profile_from_detected_shape(intensity_profiles, along_radius, peak_radius_by_angle, membrane_width_pixels=5):
     """
-    Calculate membrane intensity at each angle using the detected shape.
+    Calculate angular intensity profiles around a detected noncircular membrane.
 
-    Input
+    Parameters
     ----------
     intensity_profiles : np.ndarray
-        Linear profiles with shape
-        ``(radial_positions, angles, channels)``.
+        Intensity profiles with shape radial position x angle x channel.
 
     along_radius : np.ndarray
-        Radial distance axis.
+        Radial distance corresponding to the first axis of intensity_profiles.
 
-    peak_positions : np.ndarray
-        Detected membrane position for each angle.
+    peak_radius_by_angle : np.ndarray
+        Detected membrane radius for each angle.
 
-    membrane_width : float, default=0.05
-        Half-width of the membrane region, relative to the detected membrane
-        radius. For example, 0.05 averages from 0.95 to 1.05 times the
-        membrane position.
+    membrane_width_pixels : int
+        Odd number of radial samples averaged around each detected membrane position.
+        For example, 5 uses the central membrane sample and 2 samples on each side.
 
-    Output
+    Returns
     -------
-    np.ndarray
-        Mean membrane intensity at each angle and channel, with shape
-        ``(angles, channels)``.
+    angular_profiles : np.ndarray
+        Mean membrane intensity with shape angle x channel.
     """
+    if membrane_width_pixels < 1 or membrane_width_pixels % 2 == 0:
+        raise ValueError("membrane_width_pixels must be a positive odd number.")
+
     _, num_angles, num_channels = intensity_profiles.shape
 
-    angular_profile = np.full(
-        (num_angles, num_channels),
-        np.nan,
-        dtype=float,
-    )
+    if peak_radius_by_angle.size != num_angles:
+        raise ValueError("peak_radius_by_angle must contain one radius per angle.")
 
-    for angle_i in range(num_angles):
-        membrane_distance = peak_positions[angle_i]
+    half_width = membrane_width_pixels // 2
+    angular_profiles = np.full((num_angles, num_channels), np.nan)
 
-        if np.isnan(membrane_distance) or membrane_distance <= 0:
+    for angle_i, peak_radius in enumerate(peak_radius_by_angle):
+        if np.isnan(peak_radius):
             continue
 
-        distance_normalized = along_radius / membrane_distance
+        #find the radial sample closest to the detected membrane radius
+        peak_index = np.argmin(np.abs(along_radius - peak_radius))
 
-        membrane_mask = (
-            (distance_normalized >= 1 - membrane_width)
-            & (distance_normalized <= 1 + membrane_width)
-        )
+        #select an equal number of radial samples inside and outside the membrane
+        start_index = max(0, peak_index - half_width)
+        end_index = min(along_radius.size, peak_index + half_width + 1)
 
-        if not np.any(membrane_mask):
+        #skip angles where the complete requested window does not fit
+        if end_index - start_index != membrane_width_pixels:
             continue
 
-        angular_profile[angle_i, :] = np.nanmean(
-            intensity_profiles[membrane_mask, angle_i, :],
-            axis=0,
-        )
+        #average the selected membrane region independently for every channel
+        angular_profiles[angle_i, :] = np.nanmean(intensity_profiles[start_index:end_index, angle_i, :], axis=0)
 
-    return angular_profile
+    return angular_profiles
 
 def choose_num_angles(radius, target_arc_spacing=1.1, min_angles=120, max_angles=360):
     """
@@ -489,16 +467,8 @@ def choose_num_angles(radius, target_arc_spacing=1.1, min_angles=120, max_angles
         Number of angular profiles to use for this vesicle.
     """
 
-    num_angles = int(
-        np.ceil(
-            2 * np.pi * radius / target_arc_spacing
-        )
-    )
+    num_angles = int(np.ceil(2 * np.pi * radius / target_arc_spacing))
 
-    num_angles = np.clip(
-        num_angles,
-        min_angles,
-        max_angles
-    )
+    num_angles = np.clip(num_angles, min_angles, max_angles)
 
     return int(num_angles)
