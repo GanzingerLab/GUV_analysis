@@ -315,7 +315,7 @@ def normalized_radial_profile_from_detected_shape(intensity_profiles, along_radi
     return radial_profiles_normalized, normalized_distance_axis, normalized_profiles
     
 
-def angular_profile(intensity_profiles, index_border_in, index_border_out):
+def angular_profile(intensity_profiles, index_border_in, index_border_out, settings, guv_ch):
     """
     Calculation of the angular profile along the membrane contour for a given 
     vesicle.
@@ -347,10 +347,18 @@ def angular_profile(intensity_profiles, index_border_in, index_border_out):
     start = index_border_in
     stop = index_border_out
 
-    return np.mean(intensity_profiles[start:stop, :, :], axis=0)
+    num_angles = intensity_profiles.shape[1]
+    theta = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
+
+    angular_profiles = np.mean(intensity_profiles[start:stop, :, :], axis=0)
+
+    flattened_profile, fitted_profile, death_mark, comments = flatten_angular_profile(angular_profiles[:,guv_ch], theta, settings)
+    
+    return angular_profiles, flattened_profile, death_mark, comments
 
 
-def angular_profile_from_detected_shape(intensity_profiles, along_radius, peak_radius_by_angle, membrane_width_pixels=5):
+
+def angular_profile_from_detected_shape(intensity_profiles, along_radius, peak_radius_by_angle, settings, guv_ch):
     """
     Calculate angular intensity profiles around a detected noncircular membrane.
 
@@ -374,7 +382,7 @@ def angular_profile_from_detected_shape(intensity_profiles, along_radius, peak_r
     angular_profiles : np.ndarray
         Mean membrane intensity with shape angle x channel.
     """
-    if membrane_width_pixels < 1 or membrane_width_pixels % 2 == 0:
+    if settings.noncircular_membrane_width_pixels < 1 or settings.noncircular_membrane_width_pixels % 2 == 0:
         raise ValueError("membrane_width_pixels must be a positive odd number.")
 
     _, num_angles, num_channels = intensity_profiles.shape
@@ -382,7 +390,7 @@ def angular_profile_from_detected_shape(intensity_profiles, along_radius, peak_r
     if peak_radius_by_angle.size != num_angles:
         raise ValueError("peak_radius_by_angle must contain one radius per angle.")
 
-    half_width = membrane_width_pixels // 2
+    half_width = settings.noncircular_membrane_width_pixels // 2
     angular_profiles = np.full((num_angles, num_channels), np.nan)
 
     for angle_i, peak_radius in enumerate(peak_radius_by_angle):
@@ -397,13 +405,121 @@ def angular_profile_from_detected_shape(intensity_profiles, along_radius, peak_r
         end_index = min(along_radius.size, peak_index + half_width + 1)
 
         #skip angles where the complete requested window does not fit
-        if end_index - start_index != membrane_width_pixels:
+        if end_index - start_index != settings.noncircular_membrane_width_pixels:
             continue
 
         #average the selected membrane region independently for every channel
         angular_profiles[angle_i, :] = np.nanmean(intensity_profiles[start_index:end_index, angle_i, :], axis=0)
 
-    return angular_profiles
+    num_angles = intensity_profiles.shape[1]
+    theta = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
+
+    flattened_profile, fitted_profile, death_mark, comments = flatten_angular_profile(angular_profiles[:,guv_ch], theta, settings)
+    
+    return angular_profiles, flattened_profile, death_mark, comments
+
+def flatten_angular_profile(angular_profile, angles, settings):
+    """
+    Remove the two-fold angular intensity modulation caused by polarization.
+
+    Parameters
+    ----------
+    angular_profile : np.ndarray
+        Membrane intensity at each angle.
+
+    angles : np.ndarray
+        Angular positions in radians.
+
+    Returns
+    -------
+    flattened_profile : np.ndarray
+        Angular intensity corrected for the fitted polarization pattern and
+        rescaled to the median intensity of the original angular profile.
+
+    fitted_profile : np.ndarray
+        Fitted two-fold angular intensity pattern.
+    """
+    comments = []
+    death_mark = False
+    valid = np.isfinite(angular_profile) & np.isfinite(angles)
+
+    design_matrix = np.column_stack((
+        np.ones(np.count_nonzero(valid)),
+        np.cos(2 * angles[valid]),
+        np.sin(2 * angles[valid]),
+    ))
+
+    profile = angular_profile[valid]
+
+    coefficients, _, _, _ = np.linalg.lstsq(design_matrix, profile, rcond=None)
+
+    full_design_matrix = np.column_stack((
+        np.ones(angles.size),
+        np.cos(2 * angles),
+        np.sin(2 * angles),
+    ))
+
+    fitted_profile = full_design_matrix @ coefficients
+
+    if np.any(fitted_profile <= 0):
+        raise ValueError("Polarization fit contains non-positive values.")
+
+    flattened_profile = angular_profile / fitted_profile
+
+    fit = fitted_profile[valid]
+
+    profile_median = np.nanmedian(profile)
+    fit_median = np.nanmedian(fit)
+
+    if not np.isfinite(profile_median) or profile_median <= 0:
+        raise ValueError("Angular profile has a non-positive or non-finite median.")
+
+    if not np.isfinite(fit_median) or fit_median <= 0:
+        raise ValueError("Polarization fit has a non-positive or non-finite median.")
+
+    profile_norm = profile / profile_median
+    fit_norm = fit / fit_median
+
+    fit_rmse = np.sqrt(np.nanmean((profile_norm - fit_norm) ** 2))
+    fit_correlation = np.corrcoef(profile_norm, fit_norm)[0, 1]
+
+    a, b, c = coefficients
+
+    if not np.isfinite(a) or a <= 0:
+        raise ValueError("Polarization fit has a non-positive or non-finite baseline.")
+
+    amplitude = np.hypot(b, c)
+    modulation_depth = amplitude / a
+    std = np.std(flattened_profile)
+
+    if modulation_depth < settings.min_angular_variation:
+        death_mark = True
+        comments.append("angular_intensity_variation_too_low")
+
+    if fit_rmse > settings.max_angular_fit_error:
+        comments.append("angular_intensity_fit_error_too_high")
+
+    if not np.isfinite(fit_correlation) or fit_correlation < settings.min_angular_fit_correlation:
+        comments.append("angular_intensity_fit_correlation_too_low")
+
+    if std > 0.4: 
+        comments.append("high angular error")
+    
+    flattened_profile *= np.nanmedian(angular_profile)
+
+    return flattened_profile, fitted_profile, death_mark, comments
+
+def circular_rolling_average(profile, window=9):
+    """Calculate a centered rolling average for a circular one-dimensional profile."""
+    profile = np.asarray(profile, dtype=float)
+
+    if window < 1 or window % 2 == 0:
+        raise ValueError("window must be a positive odd number.")
+
+    half_window = window // 2
+    padded_profile = np.pad(profile, half_window, mode="wrap")
+    kernel = np.ones(window) / window
+    return np.convolve(padded_profile, kernel, mode="valid")
 
 def choose_num_angles(radius, target_arc_spacing=1.1, min_angles=120, max_angles=360):
     """

@@ -103,31 +103,71 @@ def global_background(img, dilated_mask):
     
     return np.mean(img[:,~dilated_mask], axis=1)
 
+# def local_background(img, ves_coordinates, dilated_mask, inner_margin=1.2, outer_margin=2.0):
+#     """
+#     Estimate local background from an annulus around the vesicle.
+
+#     Uses pixels between inner_margin * radius and outer_margin * radius.
+#     """
+#     xc = ves_coordinates[1]
+#     yc = ves_coordinates[2]
+#     radius = ves_coordinates[3]
+
+#     y, x = np.indices(img.shape[1:])
+
+#     distance = np.sqrt((x - xc) ** 2 + (y - yc) ** 2)
+
+#     background_mask = (
+#         (distance >= inner_margin * radius)
+#         & (distance <= outer_margin * radius)
+#         & (~dilated_mask)
+#     )
+#     if not np.any(background_mask):
+#         raise ValueError("No background pixels")
+#     elif np.count_nonzero(background_mask) < 10:
+#         raise ValueError("Too few background")
+        
+
+#     background = np.mean(img[:, background_mask], axis=1)
+
+#     return background
+
 def local_background(img, ves_coordinates, dilated_mask, inner_margin=1.2, outer_margin=2.0):
     """
-    Estimate local background from an annulus around the vesicle.
+    Estimate local background from an annulus around one vesicle.
 
-    Uses pixels between inner_margin * radius and outer_margin * radius.
+    Uses pixels between inner_margin * radius and outer_margin * radius,
+    excluding pixels present in the supplied dilated vesicle mask.
     """
     xc = ves_coordinates[1]
     yc = ves_coordinates[2]
     radius = ves_coordinates[3]
 
-    y, x = np.indices(img.shape[1:])
+    height, width = img.shape[1:]
+    outer_radius = outer_margin * radius
 
-    distance = np.sqrt((x - xc) ** 2 + (y - yc) ** 2)
+    x_min = max(0, int(np.floor(xc - outer_radius)))
+    x_max = min(width, int(np.ceil(xc + outer_radius)) + 1)
+    y_min = max(0, int(np.floor(yc - outer_radius)))
+    y_max = min(height, int(np.ceil(yc + outer_radius)) + 1)
+
+    cropped_img = img[:, y_min:y_max, x_min:x_max]
+    cropped_dilated_mask = dilated_mask[y_min:y_max, x_min:x_max]
+
+    y, x = np.ogrid[y_min:y_max, x_min:x_max]
+    distance_squared = (x - xc) ** 2 + (y - yc) ** 2
 
     background_mask = (
-        (distance >= inner_margin * radius)
-        & (distance <= outer_margin * radius)
-        & (~dilated_mask)
+        (distance_squared >= (inner_margin * radius) ** 2)
+        & (distance_squared <= outer_radius ** 2)
+        & (~cropped_dilated_mask)
     )
-    if not np.any(background_mask):
+
+    num_background_pixels = np.count_nonzero(background_mask)
+
+    if num_background_pixels == 0:
         raise ValueError("No background pixels")
-    elif np.count_nonzero(background_mask) < 10:
-        raise ValueError("Too few background")
-        
+    if num_background_pixels < 10:
+        raise ValueError("Too few background pixels")
 
-    background = np.mean(img[:, background_mask], axis=1)
-
-    return background
+    return np.mean(cropped_img[:, background_mask], axis=1)

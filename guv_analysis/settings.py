@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, asdict
 from pprint import pformat
 
-@dataclass(frozen=True)
+@dataclass()
 class BackgroundSettings:
     method: str = "local_then_global"
     inner_margin: float = 1.2
@@ -10,28 +10,34 @@ class BackgroundSettings:
     minimum_pixels: int = 6
 
 
-@dataclass(frozen=True)
+@dataclass()
 class ProfileSettings:
     target_arc_spacing: int = 1.1
     profile_step: float = 1.0
-    length_excess: float = 1.5
+    length_excess: float = 2.0
     smoothing_window: int = 5
     pixels_to_remove: int = 2
-    noncircular_membrane_width_pixels: int = 3
+    noncircular_membrane_width_pixels: int = 5
+    min_radial_membrane_support: float = 3.0
+    min_fraction_membrane: float = 0.6
+    min_angular_variation: float = 0.2
+    max_angular_fit_error: float = 0.4
+    min_angular_fit_correlation: float = 0.6
 
 
-@dataclass(frozen=True)
+
+@dataclass()
 class CircularMembraneSettings:
     peak_height: float = 0.1
     peak_distance: int = 5
     peak_prominence: float = 0.15
     width_relative_height: float = 0.5
-    wide_peak_fraction: float = 0.25
+    wide_peak_fraction: float = 1/3
     inside_signal_fraction: float = 0.30
     outside_signal_fraction: float = 0.40
 
 
-@dataclass(frozen=True)
+@dataclass()
 class NonCircularMembraneSettings:
     profile_smoothing_window: int = 7
     contour_smoothing_window: int = 5
@@ -43,21 +49,22 @@ class NonCircularMembraneSettings:
     max_contour_variation_fraction: float = 0.03
 
 
-@dataclass(frozen=True)
+@dataclass()
 class LocalizationSettings:
     centre_size: int = 0.25
 
 
-@dataclass(frozen=True)
+@dataclass()
 class PlotSettings:
     crop_size_factor: float = 1.5
     dpi: int = 300
     show: bool = True
 
 
-@dataclass(frozen=True)
+@dataclass()
 class AnalysisSettings:
     guv_ch:int  = 0
+    skip_death_marked: bool = True
     detection_suffix: str = "_detected_vesicles.csv"
     background: BackgroundSettings = field(
         default_factory=BackgroundSettings

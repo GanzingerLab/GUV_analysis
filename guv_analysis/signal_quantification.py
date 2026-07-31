@@ -82,19 +82,6 @@ def circular_membrane_localization(intensity_profiles, peak_index, index_border_
         where=mean_angular_signal > 0,
     )
 
-    for ch, mean_signal, median_signal, channel_rsd in zip(localization_channels, mean_angular_signal, membrane_signal, rsd):
-        if mean_signal <= 0:
-            # Angular variation cannot be normalized by a non-positive mean signal.
-            comment.append(f"zero_mean_ch{ch}")
-
-        if not np.isnan(channel_rsd) and channel_rsd > 0.8:
-            # Membrane intensity varies strongly around the vesicle circumference.
-            comment.append(f"high_angular_variation_ch{ch}")
-
-        if median_signal <= 0:
-            # Localization cannot be normalized by a non-positive membrane signal.
-            comment.append(f"zero_median_ch{ch}")
-
     localization = {int(ch): float(value) for ch, value in zip(localization_channels, localization_index)}
     return localization, comment
 
@@ -207,16 +194,6 @@ def noncircular_membrane_localization(intensity_profiles, along_radius, peak_rad
     )
 
     comments = []
-
-    for ch, mean_signal, median_signal, channel_rsd in zip(localization_channels, mean_angular_signal, membrane_signal, rsd):
-        if mean_signal <= 0 or np.isnan(mean_signal):
-            comments.append(f"zero_mean_ch{ch}")
-
-        if not np.isnan(channel_rsd) and channel_rsd > 0.8:
-            comments.append(f"high_angular_variation_ch{ch}")
-
-        if median_signal <= 0 or np.isnan(median_signal):
-            comments.append(f"zero_median_ch{ch}")
 
     localization = {int(ch): float(value) for ch, value in zip(localization_channels, localization_index)}
     return localization, comments
