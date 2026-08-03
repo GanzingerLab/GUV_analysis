@@ -4,6 +4,8 @@ import csv
 from glob import glob
 from dataclasses import dataclass, field
 from functools import wraps
+from collections.abc import Callable
+
 
 import numpy as np
 import pandas as pd
@@ -52,17 +54,17 @@ def skip_if_dead(method):
 
 @dataclass
 class MembraneDetectionResult:
-    comments: list[str] = field(default_factory=list)
-
-    peak_radius: float | None = None
-    peak_index: float | None = None
-    inner_border_index: int | None = None
-    outer_border_index: int | None = None
-
-    peak_radius_by_angle: np.ndarray | None = None
-    shape_x: np.ndarray | None = None
-    shape_y: np.ndarray | None = None
-    mean_radius: float | None = None
+    comments: list[str] = field(default_factory=list)  # Quality-control flags describing possible detection problems
+    # --- Circular membrane detection results ---
+    peak_radius: float | None = None # Refined radial position obtained by quadratic interpolation. In px.
+    peak_index: float | None = None # Integer position of the detected peak in the radial intensity profile. Indicates peak location within along radius. 
+    inner_border_index: int | None = None #same for the inner border
+    outer_border_index: int | None = None #same for the outer border
+     # --- Non-circular membrane detection results ---
+    peak_radius_by_angle: np.ndarray | None = None #Radius of the membrane at each angle
+    shape_x: np.ndarray | None = None #array contianing the cartesian coordinates of the full membrane contour on the X diraction
+    shape_y: np.ndarray | None = None #array contianing the cartesian coordinates of the full membrane contour on the Y diraction
+    mean_radius: float | None = None #Average of the detected radii around the contour
     
 
 @dataclass
@@ -106,6 +108,7 @@ class GUV:
     analysis: GUVAnalysis = field(default_factory=GUVAnalysis)
     death_mark: bool = False
     ves_coordinates: np.ndarray = field(init=False, repr=False)
+    on_death_marked: Callable[["GUV"], None] | None = field(default=None, repr=False)
 
 
     def __post_init__(self) -> None:
@@ -127,11 +130,14 @@ class GUV:
 
     @skip_if_dead
     def calculate_intensity_profiles(self) -> None: 
-        intensity_profiles, self.death_mark = linear_profiles(
+        intensity_profiles, death_mark, comment = linear_profiles(
             self.image_view.image, 
             self.ves_coordinates, 
             self.full_along_radius,
             self.theta, self.settings.profiles)
+        if death_mark:
+            self.mark_dead()
+        self.analysis.comments.extend(comment)
         self.analysis.intensity_profiles = trim_central_profiles(intensity_profiles, self.settings.profiles.pixels_to_remove)
 
     def calculate_local_background(self) -> None:
@@ -155,7 +161,7 @@ class GUV:
                 self.analysis.background_method = "local"
             except ValueError as error:
                 self.analysis.comments.append(str(error))
-                self.death_mark = True
+                self.mark_dead()
 
         elif method == "global":
             self.analysis.background = self.image_view.global_background
@@ -192,7 +198,8 @@ class GUV:
         detection= self.analysis.membrane
         detection.peak_radius, detection.peak_index, detection.inner_border_index, detection.outer_border_index, comments, detection_failed = detect_circular_GUV(
             self.analysis.radial_profiles[:,self.settings.guv_ch], self.along_radius, self.radius, self.settings.circular_membrane)
-        self.death_mark = self.death_mark or detection_failed
+        if detection_failed:
+            self.mark_dead()
         self.analysis.comments.extend(comments)
         self.analysis.membrane = detection
 
@@ -203,7 +210,8 @@ class GUV:
         detection= self.analysis.membrane
         detection.shape_x, detection.shape_y, detection.peak_radius_by_angle, detection.mean_radius, comments, detection_failed = detect_noncircular_GUV(
             self.analysis.intensity_profiles, self.along_radius, self.theta, self.ves_coordinates, self.settings.noncircular_membrane, self.settings.guv_ch)
-        self.death_mark = self.death_mark or detection_failed
+        if detection_failed:
+            self.mark_dead()
         self.analysis.comments.extend(comments)
         self.analysis.membrane = detection
 
@@ -221,7 +229,8 @@ class GUV:
             baseline_gap=baseline_gap,
         )
         self.analysis.fraction_membrane = fraction_membrane
-        self.death_mark |= death_mark
+        if death_mark:
+            self.mark_dead()
 
     @skip_if_dead
     def filter_noncircular_fraction(self, baseline_gap = 3)-> None:
@@ -234,7 +243,8 @@ class GUV:
             self.settings.profiles, 
             self.settings.guv_ch, baseline_gap=baseline_gap)
         self.analysis.fraction_membrane = fraction_membrane
-        self.death_mark |= death_mark
+        if death_mark:
+            self.mark_dead()
         
     @skip_if_dead
     def calculate_normalized_noncircular_radial_profile(self, number_radial_points = 100) -> None:
@@ -248,8 +258,6 @@ class GUV:
 
     @skip_if_dead
     def calculate_circular_angular_profile(self) -> None: 
-        if self.death_mark:
-            return
         if self.analysis.intensity_profiles is None:
             raise RuntimeError("Intensity profiles have not been calculated.")
         if self.analysis.membrane.inner_border_index is None: 
@@ -262,12 +270,11 @@ class GUV:
         membrane_corrected_angular_profiles[:, self.settings.guv_ch] = flattened_profile
         self.analysis.circular_angular_profiles = membrane_corrected_angular_profiles
         self.analysis.comments.extend(comments)
-        self.death_mark = self.death_mark or death_mark
+        if death_mark:
+            self.mark_dead()
 
     @skip_if_dead
     def calculate_noncircular_angular_profile(self) -> None:
-        if self.death_mark:
-            return 
         if self.analysis.intensity_profiles is None:
             raise RuntimeError("Intensity profiles have not been calculated.")
         if self.analysis.membrane.peak_radius_by_angle is None: 
@@ -280,7 +287,8 @@ class GUV:
         membrane_corrected_angular_profiles[:, self.settings.guv_ch] = flattened_profile
         self.analysis.noncircular_angular_profiles = membrane_corrected_angular_profiles
         self.analysis.comments.extend(comments)
-        self.death_mark = self.death_mark or death_mark
+        if death_mark:
+            self.mark_dead()
 
     @skip_if_dead
     def calculate_circular_membrane_localization(self) -> None:
@@ -309,30 +317,25 @@ class GUV:
     @skip_if_dead
     def calculate_circular_intensity(self) -> None:
         """Calculate mean intensity inside the detected circular GUV."""
-        if self.death_mark:
-            return
-
         detection = self.analysis.membrane
         radius = detection.peak_radius
 
         if radius is None or not np.isfinite(radius) or radius <= 0:
             self.analysis.comments.append("invalid_circular_radius")
-            self.death_mark = True
+            self.mark_dead()
             return
 
         mask = circular_GUV_mask(self.image_view.image.shape[1:], self.xc, self.yc, radius)
 
         if not np.any(mask):
             self.analysis.comments.append("empty_circular_mask")
-            self.death_mark = True
+            self.mark_dead()
             return
 
         _, self.analysis.circular_inside_intensity = calculate_inside_intensity(self.image_view.image, mask, self.analysis.background)
 
     @skip_if_dead
     def calculate_noncircular_intensity(self) -> None:
-        if self.death_mark:
-            return
         detection = self.analysis.membrane
         if detection.shape_x is None:
             raise RuntimeError("Noncircular membrane has not been detected.")
@@ -445,4 +448,17 @@ class GUV:
                     f"after step: {step.__name__}"
                 )
                 return
+    def mark_dead(self) -> None:
+        """
+        Mark the GUV as dead and notify its owner on the first transition.
+
+        Repeated calls have no effect.
+        """
+        if self.death_mark:
+            return
+
+        self.death_mark = True
+
+        if self.on_death_marked is not None:
+            self.on_death_marked(self)
     

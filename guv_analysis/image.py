@@ -13,7 +13,7 @@ class GUVImage:
         self.image, self.pixel_size , self.detections= open_data(path, settings.detection_suffix) 
         self.image_view = GUVImageView(path = self.path, image = self.image, pixel_size = self.pixel_size, global_mask = None)
 
-        self.guvs = {int(guv_id): GUV(id=int(guv_id), xc=float(xc), yc=float(yc), radius=float(radius), image_view = self.image_view, settings = settings)
+        self.guvs = {int(guv_id): GUV(id=int(guv_id), xc=float(xc), yc=float(yc), radius=float(radius), image_view = self.image_view, settings = settings, on_death_marked=self._on_guv_death_marked)
             for guv_id, xc, yc, radius in self.detections}
         self.bad_GUVs: set[int] = set()
         self.good_GUVs: set[int] = set(self.guvs.keys())
@@ -36,7 +36,10 @@ class GUVImage:
         for i in clumped_vesicles:
             self.guvs[i].death_mark = True
         self.bad_GUVs.update(clumped_vesicles)
-        self.good_GUVs = self.good_GUVs - self.good_GUVs 
+        self.good_GUVs = self.good_GUVs - self.bad_GUVs 
+    def _on_guv_death_marked(self, guv: GUV) -> None:
+        self.good_GUVs.discard(guv.id)
+        self.bad_GUVs.add(guv.id)
         
 
 

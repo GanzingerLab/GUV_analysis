@@ -12,6 +12,7 @@ class BackgroundSettings:
 
 @dataclass()
 class ProfileSettings:
+    flatten_angular_profiles: bool = True
     target_arc_spacing: int = 1.1
     profile_step: float = 1.0
     length_excess: float = 2.0

@@ -95,7 +95,7 @@ def linear_profiles(channels_data, ves_coordinates, along_radius, theta, paramet
     ):
         death_mark = True
 
-        return intensity_profiles, death_mark
+        return intensity_profiles, death_mark, ['too close to the border']
 
     # Convert the radial positions into a column array.
     # Shape: (profile_radius, 1)
@@ -129,7 +129,7 @@ def linear_profiles(channels_data, ves_coordinates, along_radius, theta, paramet
     # Move the channel dimension from the first position to the last position.
     intensity_profiles = np.moveaxis(intensity_profiles,  0, -1).astype(np.float64)
 
-    return intensity_profiles, death_mark
+    return intensity_profiles, death_mark, []
 
 
 def trim_central_profiles(intensity_profiles, pixels_to_remove,):
@@ -351,8 +351,8 @@ def angular_profile(intensity_profiles, index_border_in, index_border_out, setti
     theta = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
 
     angular_profiles = np.mean(intensity_profiles[start:stop, :, :], axis=0)
-
-    flattened_profile, fitted_profile, death_mark, comments = flatten_angular_profile(angular_profiles[:,guv_ch], theta, settings)
+    if settings.flatten_angular_profiles:
+        flattened_profile, fitted_profile, death_mark, comments = flatten_angular_profile(angular_profiles[:,guv_ch], theta, settings)
     
     return angular_profiles, flattened_profile, death_mark, comments
 
@@ -413,8 +413,8 @@ def angular_profile_from_detected_shape(intensity_profiles, along_radius, peak_r
 
     num_angles = intensity_profiles.shape[1]
     theta = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
-
-    flattened_profile, fitted_profile, death_mark, comments = flatten_angular_profile(angular_profiles[:,guv_ch], theta, settings)
+    if settings.flatten_angular_profiles:
+        flattened_profile, fitted_profile, death_mark, comments = flatten_angular_profile(angular_profiles[:,guv_ch], theta, settings)
     
     return angular_profiles, flattened_profile, death_mark, comments
 
