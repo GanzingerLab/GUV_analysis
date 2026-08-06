@@ -38,6 +38,12 @@ class GUVImage:
             self.guvs[i].analysis.comments.append("GUV in cluster")
         self.bad_GUVs.update(clumped_vesicles)
         self.good_GUVs = self.good_GUVs - self.bad_GUVs 
+    def kill_guvs_on_comment(self):
+        for guv_id in list(self.good_GUVs): 
+            guv = self.guvs[guv_id]
+            if any(comment in guv.analysis.comments for comment in self.settings.filter.killing_comments):
+                guv.mark_dead()
+
     def _on_guv_death_marked(self, guv: GUV) -> None:
         self.good_GUVs.discard(guv.id)
         self.bad_GUVs.add(guv.id)

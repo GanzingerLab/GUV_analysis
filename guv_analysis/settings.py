@@ -61,6 +61,50 @@ class PlotSettings:
     dpi: int = 300
     show: bool = True
 
+@dataclass
+class FilterSettings:
+    killing_comments: list[str] = field(default_factory=lambda: [
+        "contour_jump",
+        "irregular_contour"
+    ])
+
+    surviving_comments: list[str] = field(default_factory=lambda: [
+        "confetti",
+        "wide_membrane",
+        "high_int_inside",
+        "high_int_outside",
+        "angular_intensity_variation_too_low",
+        "angular_intensity_fit_error_too_high",
+        "angular_intensity_fit_correlation_too_low",
+        "high angular error",
+    ])
+    def __post_init__(self) -> None:
+        overlap = set(self.killing_comments) & set(
+            self.surviving_comments
+        )
+
+        if overlap:
+            raise ValueError(
+                "Comments cannot be both killing and surviving: "
+                f"{sorted(overlap)}"
+            )
+
+    def move_to_killing(self, comment: str) -> None:
+        """Move a comment from surviving to killing."""
+        while comment in self.surviving_comments:
+            self.surviving_comments.remove(comment)
+
+        if comment not in self.killing_comments:
+            self.killing_comments.append(comment)
+
+    def move_to_surviving(self, comment: str) -> None:
+        """Move a comment from killing to surviving."""
+        while comment in self.killing_comments:
+            self.killing_comments.remove(comment)
+
+        if comment not in self.surviving_comments:
+            self.surviving_comments.append(comment)
+
 
 @dataclass()
 class AnalysisSettings:
@@ -85,6 +129,9 @@ class AnalysisSettings:
     plotting: PlotSettings = field(
         default_factory=PlotSettings
     )
+    filter: FilterSettings = field(
+            default_factory=FilterSettings
+        )
 
     def show(self) -> None:
         print(pformat(asdict(self), sort_dicts=False))

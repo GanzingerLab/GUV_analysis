@@ -54,7 +54,6 @@ def skip_if_dead(method):
 
 @dataclass
 class MembraneDetectionResult:
-    comments: list[str] = field(default_factory=list)  # Quality-control flags describing possible detection problems
     # --- Circular membrane detection results ---
     peak_radius: float | None = None # Refined radial position obtained by quadratic interpolation. In px.
     peak_index: float | None = None # Integer position of the detected peak in the radial intensity profile. Indicates peak location within along radius. 
