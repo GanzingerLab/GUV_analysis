@@ -160,7 +160,7 @@ class GUV:
                 self.analysis.background = self.calculate_local_background()
                 self.analysis.background_method = "local"
             except ValueError as error:
-                self.analysis.comments.append(str(error))
+                self.analysis.comments.append("local bckg failed")
                 self.mark_dead()
 
         elif method == "global":
@@ -228,9 +228,10 @@ class GUV:
             guv_channel=self.settings.guv_ch,
             baseline_gap=baseline_gap,
         )
-        self.analysis.fraction_membrane = fraction_membrane
+        self.analysis.circular_fraction_membrane = fraction_membrane
         if death_mark:
             self.mark_dead()
+            self.analysis.comments.append("Low circular membrane fraction.")
 
     @skip_if_dead
     def filter_noncircular_fraction(self, baseline_gap = 3)-> None:
@@ -242,9 +243,10 @@ class GUV:
             self.image_view.global_background[self.settings.guv_ch], 
             self.settings.profiles, 
             self.settings.guv_ch, baseline_gap=baseline_gap)
-        self.analysis.fraction_membrane = fraction_membrane
+        self.analysis.noncircular_fraction_membrane = fraction_membrane
         if death_mark:
             self.mark_dead()
+            self.analysis.comments.append("Low noncircular membrane fraction.")
         
     @skip_if_dead
     def calculate_normalized_noncircular_radial_profile(self, number_radial_points = 100) -> None:
@@ -343,8 +345,6 @@ class GUV:
         mask = noncircular_GUV_mask(self.image_view.image.shape[1:], detection.shape_x, detection.shape_y)
         _, self.analysis.noncircular_inside_intensity = calculate_inside_intensity(self.image_view.image, mask, self.analysis.background)
 
-
-    @skip_if_dead
     def plot_circular_profiles(self, size_view=1.5, save_path=None, show=True) -> None:
         """Plot the image crops and calculated circular radial and angular profiles."""
         if self.analysis.radial_profiles is None:
@@ -352,7 +352,6 @@ class GUV:
         channels = range(self.image_view.image.shape[0])
         plot_profile_and_zoom(self.image_view.image, self.ves_coordinates, self.analysis.radial_profiles, self.along_radius, angular_profiles=self.analysis.angular_profiles, size_view=size_view, channels=channels, save_path=save_path, show=show)
 
-    @skip_if_dead
     def plot_noncircular_profiles(self, size_view=1.5, save_path=None, show=True) -> None:
         """Plot image crops and shape-normalized radial and angular profiles."""
         if self.analysis.noncircular_radial_profiles is None or self.analysis.noncircular_normalized_along_radius is None:
@@ -361,7 +360,6 @@ class GUV:
         channels = range(self.image_view.image.shape[0])
         plot_shape_normalized_profiles_crops_and_angles(self.image_view.image, self.ves_coordinates, self.analysis.noncircular_radial_profiles, self.analysis.noncircular_normalized_along_radius, self.analysis.noncircular_angular_profiles, channels=channels, size_view=size_view, title=f"GUV {self.id} shape-normalized profiles", save_path=save_path, show=show)
 
-    @skip_if_dead
     def plot_circular_shape(self, size_view=1.5) -> None:
         """Show the detected circular membrane over the membrane channel."""
         detection = self.analysis.membrane
@@ -372,7 +370,6 @@ class GUV:
         shape_y = self.yc + detection.peak_radius * np.sin(self.theta)
         plot_detected_guv_shape(self.image_view.image, self.settings.guv_ch, self.ves_coordinates, shape_x, shape_y, size_view=size_view, title=f"GUV {self.id} circular membrane")
 
-    @skip_if_dead
     def plot_noncircular_shape(self, size_view=1.5, save_path=None, show=True) -> None:
         """Plot the detected noncircular membrane contour over the membrane channel."""
         detection = self.analysis.membrane

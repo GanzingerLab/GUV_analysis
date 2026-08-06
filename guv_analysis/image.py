@@ -35,6 +35,7 @@ class GUVImage:
         clumped_vesicles = filter_clumped_vesicles(self.detections, dilated_mask)
         for i in clumped_vesicles:
             self.guvs[i].death_mark = True
+            self.guvs[i].analysis.comments.append("GUV in cluster")
         self.bad_GUVs.update(clumped_vesicles)
         self.good_GUVs = self.good_GUVs - self.bad_GUVs 
     def _on_guv_death_marked(self, guv: GUV) -> None:

@@ -493,7 +493,6 @@ def flatten_angular_profile(angular_profile, angles, settings):
     std = np.std(flattened_profile)
 
     if modulation_depth < settings.min_angular_variation:
-        death_mark = True
         comments.append("angular_intensity_variation_too_low")
 
     if fit_rmse > settings.max_angular_fit_error:
