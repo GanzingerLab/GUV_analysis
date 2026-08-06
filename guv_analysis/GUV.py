@@ -90,7 +90,6 @@ class GUVAnalysis:
     noncircular_inside_intensity: np.ndarray | None = None
 
     comments: list[str] = field(default_factory=list)
-    valid: bool = True
 
 @dataclass(kw_only=True)
 class GUV:

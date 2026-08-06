@@ -461,8 +461,9 @@ def flatten_angular_profile(angular_profile, angles, settings):
 
     fitted_profile = full_design_matrix @ coefficients
 
-    if np.any(fitted_profile <= 0):
-        raise ValueError("Polarization fit contains non-positive values.")
+    if np.any(~np.isfinite(fitted_profile)) or np.any(fitted_profile <= 0):
+        comments.append("invalid_polarization_fit")
+        return angular_profile.copy(), fitted_profile, False, comments
 
     flattened_profile = angular_profile / fitted_profile
 

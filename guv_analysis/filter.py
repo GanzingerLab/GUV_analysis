@@ -124,6 +124,13 @@ def membrane_fraction(intensity_profiles, peak_index_by_angle, global_background
 
     peak_index_by_angle = np.asarray(peak_index_by_angle, dtype=float)
 
+    if peak_index_by_angle.ndim == 0:
+        peak_index_by_angle = np.full(
+            num_angles,
+            peak_index_by_angle.item(),
+            dtype=float,
+        )
+
     support = np.full(num_angles, np.nan, dtype=float)
     prominence = np.full(num_angles, np.nan, dtype=float)
 

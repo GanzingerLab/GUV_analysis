@@ -1,10 +1,18 @@
 import numpy as np 
+import pandas as pd
+
+from dataclasses import fields, is_dataclass
+from pathlib import Path
+from typing import Any
+import h5py
+
 from .io_tools import open_data
 from .GUV import GUV
 from .background import mask_all_vesicles
 from .image_view import GUVImageView
 from .background import dilate_vesicle_mask, global_background
 from .filter import filter_clumped_vesicles
+from .hdf_manager import write_hdf5_value
 
 class GUVImage:
     def __init__(self, path, settings):
@@ -38,11 +46,60 @@ class GUVImage:
             self.guvs[i].analysis.comments.append("GUV in cluster")
         self.bad_GUVs.update(clumped_vesicles)
         self.good_GUVs = self.good_GUVs - self.bad_GUVs 
+
     def kill_guvs_on_comment(self):
         for guv_id in list(self.good_GUVs): 
             guv = self.guvs[guv_id]
             if any(comment in guv.analysis.comments for comment in self.settings.filter.killing_comments):
                 guv.mark_dead()
+
+    def extract_parameter(self, parameter: str, GUVs="all") -> dict[int, Any]:
+        """Extract one parameter from selected GUVs."""
+        if GUVs == "all":
+            guv_ids = self.guvs.keys()
+        elif GUVs == "good":
+            guv_ids = self.good_GUVs
+        elif GUVs == "bad":
+            guv_ids = self.bad_GUVs
+        else:
+            guv_ids = GUVs
+
+        results = {}
+
+        for guv_id in guv_ids:
+            value = self.guvs[guv_id]
+            try:
+                for attribute in parameter.split("."):
+                    value = getattr(value, attribute)
+            except AttributeError as error:
+                raise AttributeError(f"GUV {guv_id} has no parameter {parameter!r}.") from error
+
+            if value is None:
+                continue
+
+            results[guv_id] = value
+
+        return results
+    def save_parameter_hdf5(self, path: str | Path, parameter: str, GUVs="all", skip_none: bool = False) -> None:
+        """Save one parameter from selected GUVs into an HDF5 file."""
+        results = self.extract_parameter(parameter, GUVs, skip_none)
+        path = Path(path)
+
+        with h5py.File(path, "w") as file:
+            file.attrs["parameter"] = parameter
+            file.attrs["format_version"] = 1
+
+            results_group = file.create_group("results")
+
+            for guv_id, value in results.items():
+                guv_group = results_group.create_group(str(guv_id))
+                write_hdf5_value(guv_group, "value", value)
+
+    def save_hdf5(self, path: str | Path, guvs="all") -> None:
+        """Save selected GUV analysis results to an HDF5 file."""
+        from .hdf_manager import save_full_hdf5
+
+        save_full_hdf5(self, path, guvs)
 
     def _on_guv_death_marked(self, guv: GUV) -> None:
         self.good_GUVs.discard(guv.id)

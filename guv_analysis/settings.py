@@ -70,6 +70,7 @@ class FilterSettings:
 
     surviving_comments: list[str] = field(default_factory=lambda: [
         "confetti",
+        "invalid_polarization_fit",
         "wide_membrane",
         "high_int_inside",
         "high_int_outside",
