@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "guv-analysis"
+version = "0.1.0"
+description = "Analysis tools for GUV microscopy images."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Gerard Castro Linares"}
+]
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "matplotlib",
+    "h5py",
+    "tqdm",
+    "bioio",
+    "bioio-czi"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["guv_analysis*"]
