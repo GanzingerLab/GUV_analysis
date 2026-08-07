@@ -1,14 +1,9 @@
 import os
 import csv
 from glob import glob
-
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-from bioio import BioImage
 from scipy.signal import find_peaks, peak_widths
-import tifffile as tif
-from tqdm import tqdm
 from .image_tools import crop_around_guv
 
 def plot_profile_and_zoom(
@@ -78,21 +73,16 @@ def plot_profile_and_zoom(
     else:
         plt.close(fig)
 
-def save_separate_profile_plots(
-    radial_profiles,
-    along_radius,
-    angular_profiles,
-    vesicle_id,
-    channels,
-    output_folder
-):
+def save_separate_profile_plots(radial_profiles, along_radius, angular_profiles, vesicle_id, channels, output_folder, file_prefix=""):
     """
     Save separate radial and angular profile plots for each channel.
 
     Files are named:
-        radial_ves{vesicle_id}_ch{ch}.png
-        angular_ves{vesicle_id}_ch{ch}.png
+        {file_prefix}radial_ves{vesicle_id}_ch{ch}.png
+        {file_prefix}angular_ves{vesicle_id}_ch{ch}.png
     """
+
+    os.makedirs(output_folder, exist_ok=True)
 
     for ch in channels:
 
@@ -106,7 +96,7 @@ def save_separate_profile_plots(
 
         radial_path = os.path.join(
             output_folder,
-            f"radial_ves{vesicle_id}_ch{ch}.png"
+            f"{file_prefix}radial_ves{vesicle_id}_ch{ch}.png"
         )
 
         fig.savefig(radial_path, dpi=300, bbox_inches="tight")
@@ -122,14 +112,14 @@ def save_separate_profile_plots(
 
         angular_path = os.path.join(
             output_folder,
-            f"angular_ves{vesicle_id}_ch{ch}.png"
+            f"{file_prefix}angular_ves{vesicle_id}_ch{ch}.png"
         )
 
         fig.savefig(angular_path, dpi=300, bbox_inches="tight")
         plt.close(fig)
 
 
-def plot_detected_guv_shape(img, channel, ves_coordinates, shape_x, shape_y, size_view=1.5, title=None):
+def plot_detected_guv_shape(img, channel, ves_coordinates, shape_x, shape_y, size_view=1.5, title=None, save_path=None, show=True): 
     """Show a detected GUV membrane shape over the selected image channel."""
     _, xc, yc, radius = ves_coordinates
     view_radius = size_view * radius
@@ -138,14 +128,24 @@ def plot_detected_guv_shape(img, channel, ves_coordinates, shape_x, shape_y, siz
     y_min = max(0, int(yc - view_radius))
     y_max = min(img.shape[1], int(yc + view_radius + 1))
 
-    plt.figure()
-    plt.imshow(img[channel, y_min:y_max, x_min:x_max], cmap="gray")
-    plt.plot(shape_x - x_min, shape_y - y_min)
-    plt.scatter(xc - x_min, yc - y_min, marker="+")
-    plt.title(title or "Detected GUV shape")
-    plt.axis("equal")
-    plt.show()
+    fig, ax = plt.subplots()
 
+    ax.imshow(img[channel, y_min:y_max, x_min:x_max], cmap="gray")
+
+    ax.plot(shape_x - x_min, shape_y - y_min)
+
+    ax.scatter(xc - x_min, yc - y_min, marker="+")
+
+    ax.set_title(title or "Detected GUV shape")
+    ax.axis("equal")
+    ax.axis("off")
+
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
 def plot_shape_normalized_profiles_crops_and_angles(
     channels_data,

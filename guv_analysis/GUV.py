@@ -19,7 +19,7 @@ from guv_analysis.background import background_correction, dilate_vesicle_mask, 
 from guv_analysis.io_tools import get_output_folder
 from guv_analysis.membrane_detection import detect_circular_GUV, detect_noncircular_GUV
 from guv_analysis.plotting import plot_profile_and_zoom, save_separate_profile_plots, plot_detected_guv_shape, plot_shape_normalized_profiles_crops_and_angles
-from guv_analysis.profiles import angular_profile, linear_profiles, radial_profile, trim_central_profiles, choose_num_angles, normalized_radial_profile_from_detected_shape, angular_profile_from_detected_shape
+from guv_analysis.profiles import angular_profile, linear_profiles, radial_profile, trim_central_profiles, choose_num_angles, normalized_radial_profile_from_detected_shape, angular_profile_from_detected_shape, radial_positions_to_indices
 from guv_analysis.signal_quantification import circular_membrane_localization, noncircular_membrane_localization, calculate_inside_intensity
 from guv_analysis.settings import AnalysisSettings
 from guv_analysis.image_view import GUVImageView
@@ -68,31 +68,72 @@ class MembraneDetectionResult:
 
 @dataclass
 class GUVAnalysis:
-    background: np.ndarray | None = None
-    background_method: str | None = None
-    intensity_profiles_corrected: bool = False
-    circular_fraction_membrane: float | None = None
-    noncircular_fraction_membrane: float | None = None
+    background: np.ndarray | None = None  # Background intensity used for this GUV, one value per channel
+    background_method: str | None = None  # Background method actually used; usually "local" or "global"
+    intensity_profiles_corrected: bool = False  # True after background correction has been applied
 
-    intensity_profiles: np.ndarray | None = None
-    circular_radial_profiles: np.ndarray | None = None
-    noncircular_radial_profiles: np.ndarray | None = None
-    noncircular_normalized_along_radius: np.ndarray | None = None
-    circular_angular_profiles: np.ndarray | None = None
-    circular_uncorrected_angular_profiles: np.ndarray | None = None
-    noncircular_angular_profiles: np.ndarray | None = None
-    noncircular_uncorrected_angular_profiles: np.ndarray | None = None
+    intensity_profiles: np.ndarray | None = None  # Radial intensity profiles; shape radial_positions x angles x channels
 
-    membrane: MembraneDetectionResult = field(default_factory=MembraneDetectionResult)
-    circular_memb_localization: dict | None = None
-    noncircular_memb_localization: dict | None = None
-    circular_inside_intensity: np.ndarray | None = None
-    noncircular_inside_intensity: np.ndarray | None = None
+    circular_radial_profiles: np.ndarray | None = None   # Angle-averaged radial profiles for the circular route; x-axis is along_radius in pixels. Array containing one per channel. 
+    noncircular_radial_profiles: np.ndarray | None = None  # Shape-normalized radial profiles for the non-circular route; x-axis is noncircular_normalized_along_radius
+    noncircular_normalized_along_radius: np.ndarray | None = None  # Normalized radial axis for non-circular profiles; it is like along_radius but the membrane is aligned at 1.  
 
-    comments: list[str] = field(default_factory=list)
+    circular_angular_profiles: np.ndarray | None = None  # Circular membrane angular profiles; shape angles x channels
+    circular_uncorrected_angular_profiles: np.ndarray | None = None  # Circular angular profiles before angular flattening/correction
+    noncircular_angular_profiles: np.ndarray | None = None  # Non-circular membrane angular profiles; shape angles x channels
+    noncircular_uncorrected_angular_profiles: np.ndarray | None = None  # Non-circular angular profiles before angular flattening/correction
+
+    membrane: MembraneDetectionResult = field(default_factory=MembraneDetectionResult)  # Membrane detection results shared by circular/non-circular routes
+
+    circular_fraction_membrane: float | None = None  # Fraction of angles passing the circular membrane-support filter
+    noncircular_fraction_membrane: float | None = None  # Fraction of angles passing the non-circular membrane-support filter
+    
+    circular_memb_localization: dict | None = None  # Circular membrane localization values, usually one value per non-GUV channel
+    noncircular_memb_localization: dict | None = None  # Non-circular membrane localization values, usually one value per non-GUV channel
+
+    circular_inside_intensity: np.ndarray | None = None  # Inside-GUV intensity from the circular route, one value per channel
+    noncircular_inside_intensity: np.ndarray | None = None  # Inside-GUV intensity from the non-circular route, one value per channel
+
+    comments: list[str] = field(default_factory=list)  # Warnings and quality-control comments for this GUV
 
 @dataclass(kw_only=True)
 class GUV:
+    """
+    Analysis object for one detected GUV.
+
+    A GUV object stores the vesicle position, image reference, settings,
+    intermediate analysis results, final measurements, and comments.
+
+    Most analysis methods modify ``self.analysis`` in place. For example,
+    after running ``run_noncircular_analysis()``, results such as the detected
+    membrane contour, radial profiles, angular profiles, localization values,
+    and inside intensity are stored in ``self.analysis``.
+
+    Main workflow
+    -------------
+    Circular analysis:
+        guv.run_circular_analysis()
+
+    Non-circular analysis:
+        guv.run_noncircular_analysis()
+
+    Important attributes
+    --------------------
+    id : int
+        Vesicle ID from the detection CSV.
+
+    xc, yc : float
+        Vesicle center coordinates in pixels.
+
+    radius : float
+        Approximate vesicle radius in pixels from the detection CSV.
+
+    death_mark : bool
+        True if the GUV failed a quality-control step.
+
+    analysis : GUVAnalysis
+        Object where all calculated results are stored.
+    """
     id: int
     xc: float
     yc: float
@@ -119,8 +160,13 @@ class GUV:
         return np.arange(0, profile_radius_limit, self.settings.profiles.profile_step)
 
     @property
+    def samples_to_remove(self) -> int:
+        return int(np.ceil(self.settings.profiles.pixels_to_remove/ self.settings.profiles.profile_step)
+        )
+
+    @property
     def along_radius(self) -> np.ndarray:
-        return self.full_along_radius[self.settings.profiles.pixels_to_remove:]
+        return self.full_along_radius[self.samples_to_remove:]
 
     @property
     def theta(self):
@@ -136,7 +182,7 @@ class GUV:
         if death_mark:
             self.mark_dead()
         self.analysis.comments.extend(comment)
-        self.analysis.intensity_profiles = trim_central_profiles(intensity_profiles, self.settings.profiles.pixels_to_remove)
+        self.analysis.intensity_profiles = trim_central_profiles(intensity_profiles, self.samples_to_remove)
 
     def calculate_local_background(self) -> None:
         dilated_mask = dilate_vesicle_mask(self.image_view.global_mask, iterations=3)
@@ -185,17 +231,17 @@ class GUV:
 
     @skip_if_dead
     def calculate_circular_radial_profile(self) -> None:
-        self.analysis.radial_profiles = radial_profile(self.analysis.intensity_profiles)
+        self.analysis.circular_radial_profiles = radial_profile(self.analysis.intensity_profiles)
     #TODO: normalize circular profiles
     
     @skip_if_dead
     def detect_circular_membrane(self) -> None:
-        if self.analysis.radial_profiles is None:
+        if self.analysis.circular_radial_profiles is None:
             raise RuntimeError("Circular radial profile has not been calculated.")
 
         detection= self.analysis.membrane
         detection.peak_radius, detection.peak_index, detection.inner_border_index, detection.outer_border_index, comments, detection_failed = detect_circular_GUV(
-            self.analysis.radial_profiles[:,self.settings.guv_ch], self.along_radius, self.radius, self.settings.circular_membrane)
+            self.analysis.circular_radial_profiles[:,self.settings.guv_ch], self.along_radius, self.radius, self.settings.circular_membrane)
         if detection_failed:
             self.mark_dead()
         self.analysis.comments.extend(comments)
@@ -215,7 +261,7 @@ class GUV:
 
     @skip_if_dead
     def filter_circular_fraction(self, baseline_gap: int = 3) -> None:
-        if self.analysis.membrane.peak_radius is None:
+        if self.analysis.membrane.peak_index is None:
             raise RuntimeError("Circular membrane not calculated.")
 
         support, prominence, fraction_membrane, death_mark = membrane_fraction(
@@ -232,15 +278,19 @@ class GUV:
             self.analysis.comments.append("Low circular membrane fraction.")
 
     @skip_if_dead
-    def filter_noncircular_fraction(self, baseline_gap = 3)-> None:
+    def filter_noncircular_fraction(self, baseline_gap:int = 3) -> None:
         if self.analysis.membrane.peak_radius_by_angle is None: 
-            raise RuntimeError("Non-circular membrane not calculated.")   
+            raise RuntimeError("Non-circular membrane not calculated.")  
+
+        peak_index_by_angle = radial_positions_to_indices(self.analysis.membrane.peak_radius_by_angle, self.along_radius)
+
         support, prominence, fraction_membrane, death_mark = membrane_fraction(
             self.analysis.intensity_profiles, 
-            self.analysis.membrane.peak_radius_by_angle, 
+            peak_index_by_angle, 
             self.image_view.global_background[self.settings.guv_ch], 
             self.settings.profiles, 
-            self.settings.guv_ch, baseline_gap=baseline_gap)
+            self.settings.guv_ch, baseline_gap=baseline_gap
+        )
         self.analysis.noncircular_fraction_membrane = fraction_membrane
         if death_mark:
             self.mark_dead()
@@ -345,10 +395,10 @@ class GUV:
 
     def plot_circular_profiles(self, size_view=1.5, save_path=None, show=True) -> None:
         """Plot the image crops and calculated circular radial and angular profiles."""
-        if self.analysis.radial_profiles is None:
+        if self.analysis.circular_radial_profiles is None:
             raise RuntimeError("Circular radial profiles have not been calculated.")
         channels = range(self.image_view.image.shape[0])
-        plot_profile_and_zoom(self.image_view.image, self.ves_coordinates, self.analysis.radial_profiles, self.along_radius, angular_profiles=self.analysis.angular_profiles, size_view=size_view, channels=channels, save_path=save_path, show=show)
+        plot_profile_and_zoom(self.image_view.image, self.ves_coordinates, self.analysis.circular_radial_profiles, self.along_radius, angular_profiles=self.analysis.circular_angular_profiles, size_view=size_view, channels=channels, save_path=save_path, show=show)
 
     def plot_noncircular_profiles(self, size_view=1.5, save_path=None, show=True) -> None:
         """Plot image crops and shape-normalized radial and angular profiles."""
@@ -358,7 +408,7 @@ class GUV:
         channels = range(self.image_view.image.shape[0])
         plot_shape_normalized_profiles_crops_and_angles(self.image_view.image, self.ves_coordinates, self.analysis.noncircular_radial_profiles, self.analysis.noncircular_normalized_along_radius, self.analysis.noncircular_angular_profiles, channels=channels, size_view=size_view, title=f"GUV {self.id} shape-normalized profiles", save_path=save_path, show=show)
 
-    def plot_circular_shape(self, size_view=1.5) -> None:
+    def plot_circular_shape(self, size_view=1.5, save_path=None, show=True) -> None:
         """Show the detected circular membrane over the membrane channel."""
         detection = self.analysis.membrane
         if detection.peak_radius is None:
@@ -366,7 +416,7 @@ class GUV:
 
         shape_x = self.xc + detection.peak_radius * np.cos(self.theta)
         shape_y = self.yc + detection.peak_radius * np.sin(self.theta)
-        plot_detected_guv_shape(self.image_view.image, self.settings.guv_ch, self.ves_coordinates, shape_x, shape_y, size_view=size_view, title=f"GUV {self.id} circular membrane")
+        plot_detected_guv_shape(self.image_view.image, self.settings.guv_ch, self.ves_coordinates, shape_x, shape_y, size_view=size_view, title=f"GUV {self.id} circular membrane", save_path=save_path, show=show)
 
     def plot_noncircular_shape(self, size_view=1.5, save_path=None, show=True) -> None:
         """Plot the detected noncircular membrane contour over the membrane channel."""
@@ -375,16 +425,22 @@ class GUV:
         if detection.shape_x is None or detection.shape_y is None:
             raise RuntimeError("Noncircular membrane has not been detected.")
 
-        plot_detected_guv_shape(self.image_view.image, self.settings.guv_ch, self.ves_coordinates, detection.shape_x, detection.shape_y, size_view=size_view, title=f"GUV {self.id} detected shape")
+        plot_detected_guv_shape(self.image_view.image, self.settings.guv_ch, self.ves_coordinates, detection.shape_x, detection.shape_y, size_view=size_view, title=f"GUV {self.id} detected shape", save_path=save_path, show=show)
 
     @skip_if_dead
     def run_circular_analysis(self) -> None:
         """
-        Run the complete circular GUV analysis.
+        Run the full circular GUV analysis workflow.
 
-        This calculates the circular radial profile, detects the circular membrane,
-        calculates the circular angular profile, membrane localization, and mean
-        intensity inside the detected circular GUV.
+        The workflow calculates radial intensity profiles, estimates background,
+        background-corrects the profiles, detects the circular membrane position,
+        filters weak membrane detections, calculates angular profiles, calculates
+        membrane localization, and calculates inside intensity.
+
+        Results are stored in ``self.analysis``.
+
+        If one step fails a quality-control check, the GUV is death-marked and
+        later steps may be skipped depending on ``settings.skip_death_marked``.
         """
         self._run_steps(
             self._prepare_intensity_profiles,
@@ -399,12 +455,20 @@ class GUV:
     @skip_if_dead
     def run_noncircular_analysis(self) -> None:
         """
-        Run the complete noncircular GUV analysis.
+        Run the full non-circular GUV analysis workflow.
 
-        This detects the noncircular membrane using the circular membrane detection
-        as its initial estimate, calculates the shape-normalized radial and angular
-        profiles, membrane localization, and mean intensity inside the detected
-        noncircular GUV.
+        The workflow calculates radial intensity profiles, estimates background,
+        background-corrects the profiles, detects a non-circular membrane contour,
+        filters weak membrane detections, calculates shape-normalized radial
+        profiles, calculates angular membrane profiles, calculates membrane
+        localization, and calculates inside intensity.
+
+        Results are stored in ``self.analysis``.
+
+        The detected non-circular membrane is stored as:
+            self.analysis.membrane.shape_x
+            self.analysis.membrane.shape_y
+            self.analysis.membrane.peak_radius_by_angle
         """
         self._run_steps(
             self._prepare_intensity_profiles,
@@ -414,6 +478,56 @@ class GUV:
             self.calculate_noncircular_angular_profile,
             self.calculate_noncircular_membrane_localization,
             self.calculate_noncircular_intensity,
+        )
+
+    @skip_if_dead
+    def save_circular_profile_plots(self, output_folder, channels=None) -> None:
+        """
+        Save separate circular radial and angular profile plots for this GUV.
+        """
+
+        if self.analysis.circular_radial_profiles is None:
+            raise RuntimeError("Circular radial profiles not calculated.")
+
+        if self.analysis.circular_angular_profiles is None:
+            raise RuntimeError("Circular angular profiles not calculated.")
+
+        if channels is None:
+            channels = range(self.image_view.num_channels)
+
+        save_separate_profile_plots(
+            radial_profiles=self.analysis.circular_radial_profiles,
+            along_radius=self.along_radius,
+            angular_profiles=self.analysis.circular_angular_profiles,
+            vesicle_id=self.id,
+            channels=channels,
+            output_folder=output_folder,
+            file_prefix="circular_"
+        )
+
+    @skip_if_dead
+    def save_noncircular_profile_plots(self, output_folder, channels=None) -> None:
+        """
+        Save separate non-circular radial and angular profile plots for this GUV.
+        """
+
+        if self.analysis.noncircular_radial_profiles is None:
+            raise RuntimeError("Non-circular radial profiles not calculated.")
+
+        if self.analysis.noncircular_angular_profiles is None:
+            raise RuntimeError("Non-circular angular profiles not calculated.")
+
+        if channels is None:
+            channels = range(self.image_view.num_channels)
+
+        save_separate_profile_plots(
+            radial_profiles=self.analysis.noncircular_radial_profiles,
+            along_radius=self.along_radius,
+            angular_profiles=self.analysis.noncircular_angular_profiles,
+            vesicle_id=self.id,
+            channels=channels,
+            output_folder=output_folder,
+            file_prefix="noncircular_"
         )
 
     def _prepare_intensity_profiles(self) -> None:

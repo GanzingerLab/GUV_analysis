@@ -15,6 +15,30 @@ from .filter import filter_clumped_vesicles
 from .hdf_manager import write_hdf5_value
 
 class GUVImage:
+    """
+    Container for one microscopy image and all detected GUVs in that image.
+
+    This class loads the image, loads the detection CSV, creates one GUV object
+    per detected vesicle, and keeps track of good and bad GUVs during analysis.
+
+    Main attributes
+    ---------------
+    image : np.ndarray
+        Image array with shape channels x y x.
+
+    detections : np.ndarray
+        Detection table. Each row contains:
+            vesicle_id, xc, yc, radius
+
+    guvs : dict[int, GUV]
+        Dictionary containing one GUV object per detected vesicle.
+
+    good_GUVs : set[int]
+        IDs of GUVs that have not been death-marked.
+
+    bad_GUVs : set[int]
+        IDs of GUVs that have been death-marked.
+    """
     def __init__(self, path, settings):
         self.path = path
         self.settings = settings
@@ -80,9 +104,9 @@ class GUVImage:
             results[guv_id] = value
 
         return results
-    def save_parameter_hdf5(self, path: str | Path, parameter: str, GUVs="all", skip_none: bool = False) -> None:
+    def save_parameter_hdf5(self, path: str | Path, parameter: str, GUVs="all") -> None:
         """Save one parameter from selected GUVs into an HDF5 file."""
-        results = self.extract_parameter(parameter, GUVs, skip_none)
+        results = self.extract_parameter(parameter, GUVs)
         path = Path(path)
 
         with h5py.File(path, "w") as file:

@@ -351,6 +351,11 @@ def angular_profile(intensity_profiles, index_border_in, index_border_out, setti
     theta = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
 
     angular_profiles = np.mean(intensity_profiles[start:stop, :, :], axis=0)
+
+    flattened_profile = angular_profiles[:, guv_ch].copy()
+    death_mark = False
+    comments = []
+
     if settings.flatten_angular_profiles:
         flattened_profile, fitted_profile, death_mark, comments = flatten_angular_profile(angular_profiles[:,guv_ch], theta, settings)
     
@@ -413,6 +418,11 @@ def angular_profile_from_detected_shape(intensity_profiles, along_radius, peak_r
 
     num_angles = intensity_profiles.shape[1]
     theta = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
+
+    flattened_profile = angular_profiles[:, guv_ch].copy()
+    death_mark = False
+    comments = []
+
     if settings.flatten_angular_profiles:
         flattened_profile, fitted_profile, death_mark, comments = flatten_angular_profile(angular_profiles[:,guv_ch], theta, settings)
     
@@ -588,3 +598,22 @@ def choose_num_angles(radius, target_arc_spacing=1.1, min_angles=120, max_angles
     num_angles = np.clip(num_angles, min_angles, max_angles)
 
     return int(num_angles)
+
+def radial_positions_to_indices(radial_positions, along_radius):
+    """
+    Convert radial positions in pixels into radial profile indices.
+
+    Each radial position is matched to the closest value in along_radius.
+    """
+
+    radial_positions = np.asarray(radial_positions)
+
+    valid = ~np.isnan(radial_positions)
+
+    radial_indices = np.full(radial_positions.shape, fill_value=-1, dtype=int)
+
+    distance_to_radius = np.abs(radial_positions[valid, None] - along_radius[None, :])
+
+    radial_indices[valid] = np.argmin(distance_to_radius, axis=1)
+
+    return radial_indices

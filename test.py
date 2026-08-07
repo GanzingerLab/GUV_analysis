@@ -1,12 +1,16 @@
 #%%
 from guv_analysis.settings import AnalysisSettings
 from guv_analysis.image import GUVImage
+from guv_analysis.hdf_manager import load_hdf5
 import matplotlib.pyplot as plt
 import numpy as np
 import os
 from glob import glob
 from tqdm import tqdm 
 import pandas as pd
+import importlib
+import guv_analysis.hdf_manager as hdf_manager
+
 #%%
 path = r'\\sun.amolf.nl\ganzinger\project-folder\26 Optimizing PURE encapsulation and function in GUV Franzi\analysis\disguvery\testing\20260702_Exp_36_wellscans_N5_19H_1024px_#01_cropped_tiffs\test'
 images = glob(os.path.join(path, "**", "*"+'.tif'), recursive=True)
@@ -20,25 +24,95 @@ for image in images:
     image_analysis = GUVImage(image, settings)
     image_analysis.filter_GUVs_in_clusters()
     image_analysis.calculate_global_background()
-guvs = image_analysis.guvs
-bad_guvs = image_analysis.bad_GUVs
-print(bad_guvs)
+    for guv_id, guv in image_analysis.guvs.items():
+        guv.run_circular_analysis()
+        guv.run_noncircular_analysis()
+    image_analysis.kill_guvs_on_comment()
+    image_analysis.save_hdf5(image.replace('.tif', '_analysis.h5'), guvs="all")
 #%%
-guvs_to_test = [1, 8, 2.0, 21.0, 27.0, 74.0, 16, 77.0, 81.0, 82.0, 91.0, 102.0, 103.0, 106.0, 108.0, 112.0, 22, 113.0, 122.0, 123.0, 128.0, 133.0, 134.0, 136.0, 140.0, 143.0, 144.0, 145.0, 180, 148.0, 149.0, 150.0, 154.0, 155.0, 156.0, 168.0, 173.0, 179.0, 181.0, 183.0, 184.0, 185.0, 189.0, 190.0, 191.0, 196.0, 201.0, 202.0, 203.0, 209.0, 211.0, 212.0, 213.0, 216.0, 218.0, 219.0, 220.0, 226.0, 227.0, 228.0, 229.0, 231.0, 237.0, 238.0, 239.0, 243.0, 244.0, 245.0, 251.0, 252.0, 258.0, 262.0, 265.0, 266.0, 267.0, 268.0, 269.0, 274.0, 277.0, 278.0, 279.0, 280.0, 287.0, 290.0, 293.0, 296.0, 297.0, 299.0, 300.0, 301.0, 302.0, 303.0, 304.0, 305.0, 307.0, 308.0, 311.0, 312.0, 313.0, 314.0, 315.0, 316.0, 317.0, 318.0, 323.0, 324.0, 325.0, 326.0, 327.0, 329.0, 331.0, 332.0, 333.0, 334.0, 335.0, 336.0, 338.0, 339.0, 340.0, 341.0, 342.0, 344.0, 347.0, 348.0, 349.0, 350.0, 351.0, 353.0, 361.0, 363.0, 364.0, 365.0, 366.0, 369.0, 370.0, 371.0, 372.0, 374.0, 376.0, 377.0, 378.0, 380.0, 382.0, 384.0, 385.0, 386.0, 389.0, 390.0, 391.0, 393.0, 394.0, 396.0, 397.0, 398.0, 400.0, 401.0, 402.0, 404.0, 405.0, 409.0, 411.0, 414.0, 416.0, 417.0, 418.0, 419.0, 420.0, 421.0, 425.0, 428.0, 429.0, 430.0, 433.0, 434.0, 435.0, 436.0, 437.0, 438.0, 440.0, 441.0, 442.0, 444.0, 446.0, 448.0, 449.0, 450.0, 451.0, 452.0, 453.0, 454.0, 457.0, 460.0, 461.0, 464.0, 465.0, 466.0, 467.0, 468.0, 469.0, 471.0, 472.0, 473.0, 477.0, 478.0, 479.0, 483.0, 484.0, 485.0, 486.0, 487.0, 488.0, 490.0, 491.0, 494.0, 498.0, 499.0, 501.0, 507.0, 508.0, 509.0, 510.0, 511.0, 515.0, 517.0, 519.0, 520.0, 521.0, 522.0, 526.0, 527.0, 529.0, 533.0]
-common_guvs = sorted(set(bad_guvs) & set(guvs_to_test))
-print(common_guvs)
-guvs_to_test = [int(i) for i in guvs_to_test]
+guv = image_analysis.guvs[3]
+membrane_locs = guv.analysis.membrane.peak_radius_by_angle
+along_radius = guv.along_radius
+#%%
+for i in list(image_analysis.good_GUVs):
+    guv = image_analysis.guvs[i]
+    guv.plot_noncircular_profiles()
 
-for i in guvs_to_test:
-    guv = guvs[i]
-    guv.run_noncircular_analysis()
+#%%
+id = 3
+# image2 = load_hdf5(r'\\sun.amolf.nl\ganzinger\project-folder\26 Optimizing PURE encapsulation and function in GUV Franzi\analysis\disguvery\testing\20260702_Exp_36_wellscans_N5_19H_1024px_#01_cropped_tiffs\test\tile_r01_c01_analysis.h5')
+#%%
+ints = image2.extract_parameter("analysis.noncircular_inside_intensity", GUVs="good")
+print(ints)
+int_ch0 = [val[0] for val in ints.values() if val is not None]
+int_ch1 = [val[1] for val in ints.values() if val is not None]
+image2.guvs[id].plot_noncircular_profiles()
+print(image2.guvs[id].analysis.noncircular_inside_intensity)
+plt.scatter(int_ch0, int_ch1)
+plt.show()
+plt.hist(int_ch1, bins=50)
+
+#%%
+for guv_id in list(image2.good_GUVs):
+    guv = image2.guvs[guv_id]
+    guv.plot_noncircular_shape()
+    guv.plot_circular_shape()
+    print(guv.analysis.comments)
+#%%
+print(image_analysis.pixel_size)
+sizes = image2.extract_parameter("analysis.membrane.mean_radius", GUVs="good")
+sizes = {k: v/image2.pixel_size for k, v in sizes.items() if v is not None}
+plt.hist(sizes.values(), bins=50)
+# plt.ylim(0, 50000)
+# guvs_to_test = [1, 8, 2.0, 21.0, 27.0, 74.0, 16, 77.0, 81.0, 82.0, 91.0, 102.0, 103.0, 106.0, 108.0, 112.0, 22, 113.0, 122.0, 123.0, 128.0, 133.0, 134.0, 136.0, 140.0, 143.0, 144.0, 145.0, 180, 148.0, 149.0, 150.0, 154.0, 155.0, 156.0, 168.0, 173.0, 179.0, 181.0, 183.0, 184.0, 185.0, 189.0, 190.0, 191.0, 196.0, 201.0, 202.0, 203.0, 209.0, 211.0, 212.0, 213.0, 216.0, 218.0, 219.0, 220.0, 226.0, 227.0, 228.0, 229.0, 231.0, 237.0, 238.0, 239.0, 243.0, 244.0, 245.0, 251.0, 252.0, 258.0, 262.0, 265.0, 266.0, 267.0, 268.0, 269.0, 274.0, 277.0, 278.0, 279.0, 280.0, 287.0, 290.0, 293.0, 296.0, 297.0, 299.0, 300.0, 301.0, 302.0, 303.0, 304.0, 305.0, 307.0, 308.0, 311.0, 312.0, 313.0, 314.0, 315.0, 316.0, 317.0, 318.0, 323.0, 324.0, 325.0, 326.0, 327.0, 329.0, 331.0, 332.0, 333.0, 334.0, 335.0, 336.0, 338.0, 339.0, 340.0, 341.0, 342.0, 344.0, 347.0, 348.0, 349.0, 350.0, 351.0, 353.0, 361.0, 363.0, 364.0, 365.0, 366.0, 369.0, 370.0, 371.0, 372.0, 374.0, 376.0, 377.0, 378.0, 380.0, 382.0, 384.0, 385.0, 386.0, 389.0, 390.0, 391.0, 393.0, 394.0, 396.0, 397.0, 398.0, 400.0, 401.0, 402.0, 404.0, 405.0, 409.0, 411.0, 414.0, 416.0, 417.0, 418.0, 419.0, 420.0, 421.0, 425.0, 428.0, 429.0, 430.0, 433.0, 434.0, 435.0, 436.0, 437.0, 438.0, 440.0, 441.0, 442.0, 444.0, 446.0, 448.0, 449.0, 450.0, 451.0, 452.0, 453.0, 454.0, 457.0, 460.0, 461.0, 464.0, 465.0, 466.0, 467.0, 468.0, 469.0, 471.0, 472.0, 473.0, 477.0, 478.0, 479.0, 483.0, 484.0, 485.0, 486.0, 487.0, 488.0, 490.0, 491.0, 494.0, 498.0, 499.0, 501.0, 507.0, 508.0, 509.0, 510.0, 511.0, 515.0, 517.0, 519.0, 520.0, 521.0, 522.0, 526.0, 527.0, 529.0, 533.0]
+# common_guvs = sorted(set(bad_guvs) & set(guvs_to_test))
+# print(common_guvs)
+# guvs_to_test = [int(i) for i in guvs_to_test]
+# guvs_to_test = image_analysis.good_GUVs.copy()
+# for i in guvs_to_test:
+#     guv = guvs[i]
+#     guv.run_noncircular_analysis()
     # guv.plot_noncircular_shape()
 
     # print("GUV:", i)
     # print("Membrane support fraction:", guv.analysis.noncircular_fraction_membrane)
     # print("Comments:", guv.analysis.comments)
     # print("Death mark:", guv.death_mark)
+#%%
+image_analysis.kill_guvs_on_comment()
+bad_guvs2 = image_analysis.bad_GUVs
+print(bad_guvs2)
+print(len(image_analysis.good_GUVs))
+print(len(bad_guvs2))
+#%%
+guvs_to_test = image_analysis.good_GUVs.copy()
+for i in guvs_to_test:
+    guv = guvs[i]
+    # guv.run_noncircular_analysis()
+    guv.plot_noncircular_shape()
+#%%
+profiles = {}
 
+for i in image_analysis.bad_GUVs:
+    guv = image_analysis.guvs[i]
+    try:
+        guv.plot_noncircular_shape()
+    except:
+        x = int(round(guv.xc))
+        y = int(round(guv.yc))
+        r = int(round(guv.radius))
+        plt.imshow(guv.image_view.image[guv.settings.guv_ch, 
+                    y-r:y+r, 
+                    x-r:x+r], cmap='gray')
+        plt.title(f"GUV {guv.id}")
+
+#%%
+id = 25
+print(image_analysis.guvs[id].death_mark)
+print(image_analysis.guvs[id].analysis.comments)
+print(image_analysis.guvs[id].analysis.noncircular_fraction_membrane)
+image_analysis.guvs[id].plot_noncircular_shape()
+image_analysis.guvs[id].plot_noncircular_profiles()
 #%%
 path = r'\\sun.amolf.nl\ganzinger\project-folder\26 Optimizing PURE encapsulation and function in GUV Franzi\analysis\disguvery\testing\20260702_Exp_36_wellscans_N5_19H_1024px_#01_cropped_tiffs\test'
 images = glob(os.path.join(path, "**", "*"+'.tif'), recursive=True)
