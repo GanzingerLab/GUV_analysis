@@ -15,9 +15,14 @@ Running both routes on the same GUV is useful for testing, comparison, and debug
 ## Installation
 
 1. Clone or copy this repository to your computer.
-2. Open a terminal or Anaconda Prompt in the main package folder and:
-       pip install -e .
-   Note: the '.' at the end is important. 
+
+2. Open a terminal or Anaconda Prompt in the main package folder and run:
+
+   ```bash
+   pip install -e .
+   ```
+
+   Note: the `.` at the end is important.
 ---
 
 ## 1. Expected input files
