@@ -12,6 +12,13 @@ This code is meant to follow **one analysis route at a time**:
 Running both routes on the same GUV is useful for testing, comparison, and debugging, but it is not the recommended final analysis workflow.
 
 ---
+## Installation
+
+1. Clone or copy this repository to your computer.
+2. Open a terminal or Anaconda Prompt in the main package folder and:
+       pip install -e .
+   Note: the '.' at the end is important. 
+---
 
 ## 1. Expected input files
 For every image, the package expects a matching detection CSV file in the same folder.
