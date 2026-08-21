@@ -1,12 +1,23 @@
 #%%
 from guv_analysis.settings import AnalysisSettings
 from guv_analysis.image import GUVImage
+from guv_analysis.tif_converter import czi_to_tif
 from guv_analysis.hdf_manager import load_hdf5
 import matplotlib.pyplot as plt
 import numpy as np
 import os
+from pathlib import Path
+#%%Transform images from czi to tif, preserving part of the metadata
+path = Path(r"D:\Data\EVOLF\test")
 
+czi_files = list(path.rglob("*.czi"))
 
+czi = czi_files[0]
+
+for czi in czi_files:
+    print("Converting:", czi)
+    output = czi_to_tif(czi)
+    print("Saved:", output)
 #%%
 # User settings
 
@@ -16,7 +27,8 @@ guv_id_to_test = 1
 save_results = True
 
 settings = AnalysisSettings()
-settings.guv_ch = 1
+#######IMPORTANT TO CHECK THE guv_ch########
+settings.guv_ch = 1 
 settings.background.method = "local_then_global"  # Options: "local", "global", "local_then_global"
 settings.profiles.length_excess = 1.5
 settings.plotting.show = True
