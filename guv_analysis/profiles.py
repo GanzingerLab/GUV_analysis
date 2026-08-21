@@ -1,14 +1,6 @@
-import os
-import csv
-from glob import glob
 
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from bioio import BioImage
 from scipy.signal import find_peaks, peak_widths
-import tifffile as tif
-from tqdm import tqdm
 from scipy.interpolate import interp1d
 
 
@@ -231,7 +223,7 @@ def radial_profile(intensity_profiles):
     return np.nanmean(intensity_profiles, axis=1)
 
 
-def normalized_radial_profile_from_detected_shape(intensity_profiles, along_radius, peak_positions, max_normalized_distance=1.5, num_normalized_points=100):
+def normalized_radial_profile_from_detected_shape(intensity_profiles, along_radius, peak_positions, guv_ch, settings, max_normalized_distance=1.5, num_normalized_points=100):
     """
     Calculate normalized radial profiles using angle-specific membrane positions.
 
@@ -278,6 +270,9 @@ def normalized_radial_profile_from_detected_shape(intensity_profiles, along_radi
     normalized_profiles : np.ndarray
         Individual normalized profiles before averaging over angles.
         Shape: ``(num_normalized_points, angles, channels)``.
+
+    comments : list[str]
+            Quality-control comments generated during membrane detection.
     """
     _, num_angles, num_channels = intensity_profiles.shape
 
@@ -315,8 +310,88 @@ def normalized_radial_profile_from_detected_shape(intensity_profiles, along_radi
     # Average the aligned profiles over angle
     radial_profiles_normalized = np.nanmean(normalized_profiles, axis=1)
 
-    return radial_profiles_normalized, normalized_distance_axis, normalized_profiles
-    
+    comments = check_normalized_membrane_profile(radial_profiles_normalized[:, guv_ch], normalized_distance_axis, settings)
+
+    return radial_profiles_normalized, normalized_distance_axis, normalized_profiles, comments
+
+
+def check_normalized_membrane_profile(radial_profile_memb, normalized_distance_axis, settings):
+    """
+    Check the shape-normalized membrane-channel radial profile.
+
+    The detected non-circular membrane is expected to be close to normalized
+    distance 1. This function adds the same type of comments used for the
+    circular radial profile:
+        - wide_membrane
+        - high_int_inside
+        - high_int_outside
+        - confetti
+    """
+
+    comments = []
+
+    valid = np.isfinite(radial_profile_memb)
+
+    if not np.any(valid):
+        return ["no_valid_normalized_radial_profile"]
+
+    radial_profile_memb = radial_profile_memb.copy()
+    radial_profile_memb[~valid] = np.nanmin(radial_profile_memb)
+
+    max_intensity = np.nanmax(radial_profile_memb)
+    min_intensity = np.nanmin(radial_profile_memb)
+
+    if max_intensity == min_intensity:
+        norm_radial_profile = np.zeros_like(radial_profile_memb, dtype=float)
+    else:
+        norm_radial_profile = (radial_profile_memb - min_intensity) / (max_intensity - min_intensity)
+
+    # Find all candidate peaks in the normalized radial profile.
+    peaks, _ = find_peaks(
+        norm_radial_profile,
+        height=settings.peak_height,
+        distance=settings.peak_distance,
+        prominence=settings.peak_prominence,
+    )
+
+    if peaks.size == 0:
+        return ["no_memb_peak"]
+
+    # Select the peak closest to normalized membrane position 1.
+    peak_distances_to_membrane = np.abs(normalized_distance_axis[peaks] - 1)
+    chosen_peak = np.argmin(peak_distances_to_membrane)
+    peak_index = peaks[chosen_peak]
+    peak_height = radial_profile_memb[peak_index]
+
+    # More than one peak means the normalized membrane profile is not clean.
+    if peaks.size > 1:
+        comments.append("confetti")
+
+    widths = peak_widths(radial_profile_memb, [peak_index], rel_height=settings.width_relative_height)
+
+    border_in_position = widths[2][0]
+    border_out_position = widths[3][0]
+
+    profile_indices = np.arange(radial_profile_memb.size)
+    border_in_radius = np.interp(border_in_position, profile_indices, normalized_distance_axis)
+    border_out_radius = np.interp(border_out_position, profile_indices, normalized_distance_axis)
+    membrane_width = border_out_radius - border_in_radius
+
+    index_border_in = int(np.clip(np.rint(border_in_position), 0, radial_profile_memb.size - 1))
+
+    index_border_out = int(np.clip(np.rint(border_out_position), 0, radial_profile_memb.size))
+    print(membrane_width)
+    # In normalized coordinates, the membrane radius is 1.
+    if membrane_width > settings.wide_peak_fraction:
+        comments.append("wide_membrane")
+
+    if (index_border_in > 0 and np.nanmean(radial_profile_memb[:index_border_in]) >= settings.inside_signal_fraction * peak_height):
+        comments.append("high_int_inside")
+
+    if (index_border_out < radial_profile_memb.size and np.nanmean(radial_profile_memb[index_border_out:]) >= settings.outside_signal_fraction * peak_height):
+        comments.append("high_int_outside")
+
+    return comments
 
 def angular_profile(intensity_profiles, index_border_in, index_border_out, settings, guv_ch):
     """

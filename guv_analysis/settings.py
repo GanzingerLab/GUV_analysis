@@ -40,7 +40,7 @@ class CircularMembraneSettings:
     peak_distance: int = 5  # Minimum distance between candidate peaks, in radial samples
     peak_prominence: float = 0.15  # Minimum peak prominence. Default is 0.15, meaning the peak must be at least 15% higher than the highest surrounding baseline.
     width_relative_height: float = 0.5  # Relative height used to measure peak width
-    wide_peak_fraction: float = 1/3  # Maximum peak width relative to radius before flagging as wide
+    wide_peak_fraction: float = 1/5  # Maximum peak width relative to radius before flagging as wide
     inside_signal_fraction: float = 0.30  # Threshold for high signal inside the GUV
     outside_signal_fraction: float = 0.40  # Threshold for high signal outside the GUV
 

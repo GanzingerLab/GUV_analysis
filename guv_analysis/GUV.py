@@ -333,8 +333,9 @@ class GUV:
         if self.analysis.membrane.peak_radius_by_angle is None: 
             raise RuntimeError("Non-circular membrane not calculated.")        
         
-        self.analysis.noncircular_radial_profiles, self.analysis.noncircular_normalized_along_radius, _ = normalized_radial_profile_from_detected_shape(
-            self.analysis.intensity_profiles, self.along_radius, self.analysis.membrane.peak_radius_by_angle, self.settings.profiles.length_excess, number_radial_points)
+        self.analysis.noncircular_radial_profiles, self.analysis.noncircular_normalized_along_radius, _ , comments = normalized_radial_profile_from_detected_shape(
+            self.analysis.intensity_profiles, self.along_radius, self.analysis.membrane.peak_radius_by_angle, self.settings.guv_ch, self.settings.circular_membrane, self.settings.profiles.length_excess, number_radial_points)
+        self.analysis.comments.extend(comments)
 
     @skip_if_dead
     def calculate_circular_angular_profile(self) -> None: 
