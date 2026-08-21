@@ -542,6 +542,12 @@ plt.show()
 
 ## 14. Useful stored parameters
 
+Most calculated results are stored inside `guv.analysis`.
+
+For a detailed explanation of each output, see:
+
+[`analysis_outputs.md`](analysis_outputs.md)
+
 Depending on the route you used, useful parameters include:
 
 ### General
@@ -579,7 +585,6 @@ analysis.membrane.peak_radius_by_angle
 analysis.membrane.shape_x
 analysis.membrane.shape_y
 ```
-
 ---
 
 ## 15. Notes 
