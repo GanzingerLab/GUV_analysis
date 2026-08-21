@@ -7,7 +7,7 @@ name = "guv-analysis"
 version = "0.1.0"
 description = "Analysis tools for GUV microscopy images."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 authors = [
     {name = "Gerard Castro Linares"}
 ]

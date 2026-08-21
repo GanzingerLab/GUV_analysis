@@ -1,0 +1,21 @@
+name: guv-analysis
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.12
+  - numpy
+  - pandas
+  - scipy
+  - matplotlib
+  - scikit-image
+  - h5py
+  - tqdm
+  - tifffile
+  - pip
+  - pip:
+      - bioio
+      - bioio-czi
+      - -e .
