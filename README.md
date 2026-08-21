@@ -16,13 +16,11 @@ Running both routes on the same GUV is useful for testing, comparison, and debug
 
 1. Clone or copy this repository to your computer.
 
-2. Open a terminal or Anaconda Prompt in the main package folder and run:
+2. Open the Anaconda Prompt in the main package folder and run:
 
    ```bash
-   pip install -e .
+   conda env remove -n guv-analysis
    ```
-
-   Note: the `.` at the end is important.
 ---
 
 ## 1. Expected input files
