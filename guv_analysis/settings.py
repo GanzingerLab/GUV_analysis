@@ -20,7 +20,8 @@ class ProfileSettings:
     flatten_angular_profiles: bool = True  # If True, correct angular profiles for broad intensity trends
     target_arc_spacing: float = 1.1  # Approximate spacing between angular profiles at the membrane. Later, this is used to claculate the number of angles needed to reach a separation of the number set here of pixels between angles. 
     profile_step: float = 1.0  # Radial sampling step in pixels -> Step size for intensity profiles. 
-    length_excess: float = 2.0  # Radial profile length relative to GUV radius from disGUVery. 
+    length_excess: float = 1.5 # Radial profile length relative to GUV radius from disGUVery. 
+    edge_proximity: float = 1.05  # Only used to check whether the GUV membrane itself is too close to the image edge
     smoothing_window: int = 5  # Angular smoothing window for intensity profiles. odd number. 
     pixels_to_remove: int = 2  # Central radial samples removed; equals pixels even if profile_step != 1.
     noncircular_membrane_width_pixels: int = 5  # Expected membrane width in pixels for non-circular membrane detection. Must be a positive odd number.

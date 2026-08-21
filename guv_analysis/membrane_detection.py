@@ -57,8 +57,16 @@ def detect_circular_GUV(radial_profile_memb, along_radius, radius, settings):
     comments = []
 
     #normalize the radial profile between 0 and 1
-    max_intensity = np.max(radial_profile_memb)
-    min_intensity = np.min(radial_profile_memb)
+    valid = np.isfinite(radial_profile_memb)
+
+    if not np.any(valid):
+        return np.nan, 0, 0, 0, ["no_valid_radial_profile"], True
+
+    radial_profile_memb = radial_profile_memb.copy()
+    radial_profile_memb[~valid] = np.nanmin(radial_profile_memb)
+
+    max_intensity = np.nanmax(radial_profile_memb)
+    min_intensity = np.nanmin(radial_profile_memb)
 
     if max_intensity == min_intensity:
         norm_radial_profile = np.zeros_like(radial_profile_memb, dtype=float)
@@ -280,6 +288,7 @@ def detect_noncircular_GUV(intensity_profiles, along_radius, theta, ves_coordina
     # it is done by changing the sign to the normalized intensity --> the more intense, the less
     # the cost to be selected.
     node_cost = -signal_norm
+    node_cost[~np.isfinite(node_cost)] = 1e6
 
     # calculate distance from the expected DisGUVery radius
     radius_deviation = radius_values - approx_radius

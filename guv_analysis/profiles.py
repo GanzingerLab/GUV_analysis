@@ -76,16 +76,17 @@ def linear_profiles(channels_data, ves_coordinates, along_radius, theta, paramet
     radius = ves_coordinates[3]
 
 
-    profile_radius_limit = parameters_profiles.length_excess * radius
+    profile_radius_limit = parameters_profiles.edge_proximity * radius
 
     profile_radius = len(along_radius)
 
     # Create an empty array with the expected output shape.
     num_angles = len(theta)
-    intensity_profiles = np.zeros((profile_radius, num_angles, num_channels))
+
+    intensity_profiles = np.full((profile_radius, num_angles, num_channels), np.nan, dtype=np.float64)
 
     death_mark = False
-
+    comments = []
     # Check whether any radial profile would extend outside the image.
     if (
         xc + profile_radius_limit >= image_dim[0]
@@ -109,27 +110,32 @@ def linear_profiles(channels_data, ves_coordinates, along_radius, theta, paramet
     # Each row corresponds to a distance from the center.
     # Each column corresponds to one angle.
     # x = xc + radius_position * cos(angle)
-    line_x = (xc + np.rint(
-                radial_positions
-                * np.cos(angles)
-            )
-        ).astype(np.intp)
+    line_x = (xc + np.rint(radial_positions * np.cos(angles))).astype(np.intp)
 
     # Create the y-coordinate of every sampling point along each radial profile:
     # y = yc + radius_position * sin(angle)
-    line_y = (yc + np.rint(
-                radial_positions
-                * np.sin(angles)
-            )
-        ).astype(np.intp)
+    line_y = (yc + np.rint(radial_positions * np.sin(angles))).astype(np.intp)
 
-    # Extract the intensity values for all channels and all profile coordinates.
-    intensity_profiles = channels_data[:, line_y, line_x]
+    # Check which sampled positions are inside the image.
+    valid_positions = (
+        (line_x >= 0)
+        & (line_x < image_dim[0])
+        & (line_y >= 0)
+        & (line_y < image_dim[1])
+    )
 
-    # Move the channel dimension from the first position to the last position.
-    intensity_profiles = np.moveaxis(intensity_profiles,  0, -1).astype(np.float64)
+    # Store how much of the requested profile was actually inside the image.
+    valid_fraction = np.mean(valid_positions)
 
-    return intensity_profiles, death_mark, []
+    if valid_fraction < 1:
+        comments.append("partial radial profile outside image")
+
+    # Extract valid pixels only.
+    for ch in range(num_channels):
+        channel_profile = intensity_profiles[:, :, ch]
+        channel_profile[valid_positions] = channels_data[ch,  line_y[valid_positions], line_x[valid_positions]]
+
+    return intensity_profiles, death_mark, comments
 
 
 def trim_central_profiles(intensity_profiles, pixels_to_remove,):
@@ -192,15 +198,12 @@ def circular_rolling_average_linear_profiles(intensity_profiles, window_size=5):
 
     half_window = window_size // 2
 
-    intensity_profiles_smoothed = np.zeros_like(intensity_profiles)
-
+    rolled_profiles = []
     for shift in range(-half_window, half_window + 1):
-        intensity_profiles_smoothed = (
-            intensity_profiles_smoothed
-            + np.roll(intensity_profiles, shift=shift, axis=1)
-        )
+        rolled_profiles.append(np.roll(intensity_profiles, shift=shift, axis=1))
 
-    intensity_profiles_smoothed = intensity_profiles_smoothed / window_size
+    rolled_profiles = np.stack(rolled_profiles, axis=0)
+    intensity_profiles_smoothed = np.nanmean(rolled_profiles, axis=0)
 
     return intensity_profiles_smoothed
 
@@ -225,7 +228,7 @@ def radial_profile(intensity_profiles):
 # This ensures profiles from GUVs with different radii have the same length
 # and can be compared, stacked, or averaged directly.
 
-    return np.mean(intensity_profiles, axis=1)
+    return np.nanmean(intensity_profiles, axis=1)
 
 
 def normalized_radial_profile_from_detected_shape(intensity_profiles, along_radius, peak_positions, max_normalized_distance=1.5, num_normalized_points=100):
@@ -350,7 +353,7 @@ def angular_profile(intensity_profiles, index_border_in, index_border_out, setti
     num_angles = intensity_profiles.shape[1]
     theta = np.linspace(0, 2 * np.pi, num_angles, endpoint=False)
 
-    angular_profiles = np.mean(intensity_profiles[start:stop, :, :], axis=0)
+    angular_profiles = np.nanmean(intensity_profiles[start:stop, :, :], axis=0)
 
     flattened_profile = angular_profiles[:, guv_ch].copy()
     death_mark = False
