@@ -19,7 +19,7 @@ Running both routes on the same GUV is useful for testing, comparison, and debug
 2. Open the Anaconda Prompt in the main package folder and run:
 
    ```bash
-   conda env remove -n guv-analysis
+   conda env create -f environment.yml
    ```
 ---
 
