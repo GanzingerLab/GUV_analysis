@@ -56,8 +56,8 @@ class NonCircularMembraneSettings:
     radius_prior_weight: float = 0.1  # Higher values keep contour closer to approximate radius
     min_radius_fraction: float = 0.35  # Minimum allowed radius as fraction of approximate radius (disGUVEry radius)
     max_radius_fraction: float = 1.5  # Maximum allowed radius as fraction of approximate radius (disGUVEry radius)
-    max_single_jump_fraction: float = 0.10  # Maximum allowed local radius jump before flagging contour_jump
-    max_contour_variation_fraction: float = 0.03  # Maximum allowed contour irregularity before flagging irregular_contour
+    max_single_jump_fraction: float = 0.20  # Maximum allowed local radius jump before flagging contour_jump
+    max_contour_variation_fraction: float = 0.05  # Maximum allowed contour irregularity before flagging irregular_contour
 
 
 @dataclass()

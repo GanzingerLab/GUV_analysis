@@ -182,7 +182,9 @@ class GUV:
 
         # Record the actual profile length used for this GUV.
         self.analysis.profile_extended_for_padding = minimum_last > requested_last
-        self.analysis.effective_length_excess = (last_sample * step) / self.radius
+        self.analysis.effective_length_excess = ((last_sample*step) / self.radius
+                                                    if self.analysis.profile_extended_for_padding
+                                                    else settings.length_excess)
 
         # Convert the radial sample indices into radial positions.
         return np.arange(last_sample + 1) * step
@@ -207,7 +209,11 @@ class GUV:
             channel = self.settings.guv_ch
 
         if length_excess is None:
-            length_excess = self.settings.profiles.length_excess
+            if self.analysis.effective_length_excess is not None:
+                length_excess = self.analysis.effective_length_excess
+            else:    
+                length_excess = self.settings.profiles.length_excess
+
 
         view_radius = length_excess * self.radius
 
@@ -336,7 +342,7 @@ class GUV:
             self.analysis.comments.append("Low circular membrane fraction.")
 
     @skip_if_dead
-    def filter_noncircular_fraction(self, baseline_gap:int = 3) -> None:
+    def filter_noncircular_fraction(self, baseline_gap:int = 2) -> None:
         if self.analysis.membrane.peak_radius_by_angle is None: 
             raise RuntimeError("Non-circular membrane not calculated.")  
 

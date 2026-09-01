@@ -150,6 +150,7 @@ def membrane_fraction(intensity_profiles, peak_index_by_angle, global_background
         # Baseline region inside the membrane.
         inner_end = membrane_start - baseline_gap
         inner_start = inner_end - baseline_width
+        inner_start = max(inner_start, 0)
 
         # Baseline region outside the membrane.
         outer_start = membrane_end + baseline_gap
