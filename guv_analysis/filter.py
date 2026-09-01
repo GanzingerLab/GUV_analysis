@@ -105,9 +105,9 @@ def membrane_fraction(intensity_profiles, peak_index_by_angle, global_background
     The membrane and baseline windows use the same number of radial samples,
     defined by ``profile_settings.noncircular_membrane_width_pixels``.
 
-    Support remains ``np.nan`` for angles where the membrane index is invalid,
-    the required windows do not fit inside the radial profile, or one of the
-    windows contains no finite values.
+    Support remains np.nan for angles where the membrane index is invalid, 
+    the membrane or inner baseline window does not fit, no outer baseline 
+    pixels are available, or one of the windows contains no finite values.
     """
     channel_profiles = intensity_profiles[:, :, guv_channel]
     num_radial_positions, num_angles = channel_profiles.shape
@@ -155,17 +155,19 @@ def membrane_fraction(intensity_profiles, peak_index_by_angle, global_background
         outer_start = membrane_end + baseline_gap
         outer_end = outer_start + baseline_width
 
-        # All three windows must fit inside the radial profile.
-        if inner_start < 0 or outer_end > num_radial_positions:
-            continue
-
         radial_profile = channel_profiles[:, angle_i]
+
+        outer_end = min(outer_end, num_radial_positions)
+
+        # All three windows must fit inside the radial profile.
+        if inner_start < 0 or outer_start >= outer_end:
+            continue
 
         membrane_values = radial_profile[membrane_start:membrane_end]
         inner_values = radial_profile[inner_start:inner_end]
         outer_values = radial_profile[outer_start:outer_end]
 
-        # Every window must contain at least one finite value.
+        # The inner baseline must fit completely, and at least one outer-baseline pixel must be available.
         if (
             not np.any(np.isfinite(membrane_values))
             or not np.any(np.isfinite(inner_values))

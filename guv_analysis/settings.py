@@ -21,10 +21,11 @@ class ProfileSettings:
     target_arc_spacing: float = 1.1  # Approximate spacing between angular profiles at the membrane. Later, this is used to claculate the number of angles needed to reach a separation of the number set here of pixels between angles. 
     profile_step: float = 1.0  # Radial sampling step in pixels -> Step size for intensity profiles. 
     length_excess: float = 1.5 # Radial profile length relative to GUV radius from disGUVery. 
+    minimum_outer_padding_pixels: float =7.0 # Minimum radial distance sampled beyond the approximate DisGUVery radius.
     edge_proximity: float = 1.05  # Only used to check whether the GUV membrane itself is too close to the image edge
     smoothing_window: int = 5  # Angular smoothing window for intensity profiles. odd number. 
     pixels_to_remove: int = 2  # Central radial samples removed; equals pixels even if profile_step != 1.
-    noncircular_membrane_width_pixels: int = 5  # Expected membrane width in pixels for non-circular membrane detection. Must be a positive odd number.
+    noncircular_membrane_width_pixels: int = 3  # Expected membrane width in pixels for non-circular membrane detection. Must be a positive odd number.
 
     min_radial_membrane_support: float = 3.0  # Minimum membrane_prominence / local_noise required for one angle to be considered membrane. The proportion of angles considered membranes is the fraction_membrane
     min_fraction_membrane: float = 0.6  # Minimum membrane fraction required to keep the GUV

@@ -72,6 +72,9 @@ class GUVAnalysis:
     background_method: str | None = None  # Background method actually used; usually "local" or "global"
     intensity_profiles_corrected: bool = False  # True after background correction has been applied
 
+    profile_extended_for_padding: bool = False
+    effective_length_excess: float | None = None
+
     intensity_profiles: np.ndarray | None = None  # Radial intensity profiles; shape radial_positions x angles x channels
 
     circular_radial_profiles: np.ndarray | None = None   # Angle-averaged radial profiles for the circular route; x-axis is along_radius in pixels. Array containing one per channel. 
@@ -156,8 +159,33 @@ class GUV:
 
     @property
     def full_along_radius(self) -> np.ndarray:
-        profile_radius_limit = self.settings.profiles.length_excess * self.radius
-        return np.arange(0, profile_radius_limit, self.settings.profiles.profile_step)
+        """
+        Return the complete radial sampling axis.
+
+        The profile uses the length requested through ``length_excess`` unless
+        that length provides insufficient samples outside the approximate GUV
+        radius. For small GUVs, the profile is automatically extended to include
+        ``minimum_outer_padding_pixels`` beyond the approximate membrane.
+        """
+        settings = self.settings.profiles
+        step = settings.profile_step
+
+        # Calculate the last sample index produced by the user-requested length excess.
+        requested_last = int(np.floor(settings.length_excess * self.radius / step))
+
+        # Ensure enough samples remain outside small GUVs for the membrane window,
+        # baseline gap, and outer-baseline window.
+        minimum_last = (int(np.floor(self.radius / step)) + int(np.ceil(settings.minimum_outer_padding_pixels / step)))
+
+        # Use the requested length unless it provides insufficient outward padding.
+        last_sample = max(requested_last, minimum_last)
+
+        # Record the actual profile length used for this GUV.
+        self.analysis.profile_extended_for_padding = minimum_last > requested_last
+        self.analysis.effective_length_excess = (last_sample * step) / self.radius
+
+        # Convert the radial sample indices into radial positions.
+        return np.arange(last_sample + 1) * step
 
     @property
     def samples_to_remove(self) -> int:
@@ -290,7 +318,7 @@ class GUV:
         self.analysis.membrane = detection
 
     @skip_if_dead
-    def filter_circular_fraction(self, baseline_gap: int = 3) -> None:
+    def filter_circular_fraction(self, baseline_gap: int = 2) -> None:
         if self.analysis.membrane.peak_index is None:
             raise RuntimeError("Circular membrane not calculated.")
 

@@ -1,4 +1,4 @@
-
+import warnings
 import numpy as np
 from scipy.signal import find_peaks, peak_widths
 from scipy.interpolate import interp1d
@@ -195,7 +195,13 @@ def circular_rolling_average_linear_profiles(intensity_profiles, window_size=5):
         rolled_profiles.append(np.roll(intensity_profiles, shift=shift, axis=1))
 
     rolled_profiles = np.stack(rolled_profiles, axis=0)
-    intensity_profiles_smoothed = np.nanmean(rolled_profiles, axis=0)
+
+    # Some outer radial positions can contain only NaNs when profiles extend
+    # beyond the image boundary. These missing values are expected; nanmean
+    # correctly leaves such positions as NaN, so we suppress that warning.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Mean of empty slice", category=RuntimeWarning)
+        intensity_profiles_smoothed = np.nanmean(rolled_profiles, axis=0)
 
     return intensity_profiles_smoothed
 
@@ -308,7 +314,12 @@ def normalized_radial_profile_from_detected_shape(intensity_profiles, along_radi
         normalized_profiles[:, angle_i, :] = interpolator(normalized_distance_axis)
 
     # Average the aligned profiles over angle
-    radial_profiles_normalized = np.nanmean(normalized_profiles, axis=1)
+    # Some normalized distances may fall outside the radial range available
+    # for every angle. These positions are expected to remain NaN; suppress
+    # the warning raised when nanmean encounters an all-NaN slice.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="Mean of empty slice", category=RuntimeWarning)
+        radial_profiles_normalized = np.nanmean(normalized_profiles, axis=1)
 
     comments = check_normalized_membrane_profile(radial_profiles_normalized[:, guv_ch], normalized_distance_axis, settings)
 
@@ -380,7 +391,7 @@ def check_normalized_membrane_profile(radial_profile_memb, normalized_distance_a
     index_border_in = int(np.clip(np.rint(border_in_position), 0, radial_profile_memb.size - 1))
 
     index_border_out = int(np.clip(np.rint(border_out_position), 0, radial_profile_memb.size))
-    print(membrane_width)
+    
     # In normalized coordinates, the membrane radius is 1.
     if membrane_width > settings.wide_peak_fraction:
         comments.append("wide_membrane")
