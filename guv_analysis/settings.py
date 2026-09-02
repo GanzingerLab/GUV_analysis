@@ -63,7 +63,7 @@ class NonCircularMembraneSettings:
 @dataclass()
 class LocalizationSettings:
     """Settings for localization measurements."""
-    centre_size: float = 0.25  # proportion of pixels from the center of the profile considered to be center to calculate localization. 
+    centre_size: float = 0.5  # proportion of pixels from the center of the profile considered to be center to calculate localization. 
 
 @dataclass()
 class PlotSettings:

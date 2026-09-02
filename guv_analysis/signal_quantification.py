@@ -85,7 +85,7 @@ def circular_membrane_localization(intensity_profiles, peak_index, index_border_
     localization = {int(ch): float(value) for ch, value in zip(localization_channels, localization_index)}
     return localization, comment
 
-def noncircular_membrane_localization(intensity_profiles, along_radius, peak_radius_by_angle, membrane_width_samples=5, size_central_area=0.25, guv_channel=0):
+def noncircular_membrane_localization(intensity_profiles, along_radius, peak_radius_by_angle, membrane_width_samples=5, size_central_area=0.5, guv_channel=0):
     """
     Quantify membrane localization using one detected membrane radius per angle.
 
