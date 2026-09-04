@@ -499,7 +499,7 @@ class GUV:
 
         plot_detected_guv_shape(self.image_view.image, self.settings.guv_ch, self.ves_coordinates, detection.shape_x, detection.shape_y, size_view=size_view, title=f"GUV {self.id} detected shape", save_path=save_path, show=show)
 
-    @skip_if_dead
+    
     def run_circular_analysis(self) -> None:
         """
         Run the full circular GUV analysis workflow.
@@ -524,7 +524,7 @@ class GUV:
             self.calculate_circular_intensity,
         )
 
-    @skip_if_dead
+    
     def run_noncircular_analysis(self) -> None:
         """
         Run the full non-circular GUV analysis workflow.
@@ -642,4 +642,5 @@ class GUV:
 
         if self.on_death_marked is not None:
             self.on_death_marked(self)
+
     

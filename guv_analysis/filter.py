@@ -214,3 +214,4 @@ def membrane_fraction(intensity_profiles, peak_index_by_angle, global_background
     death_mark = (fraction_membrane < profile_settings.min_fraction_membrane)
 
     return support, prominence, fraction_membrane, death_mark
+
