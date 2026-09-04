@@ -202,7 +202,7 @@ class GUV:
     def theta(self):
         return np.linspace(0, 2 * np.pi, self.num_angles, endpoint=False)
 
-    def plot_crop(self, channel=None, length_excess=None, save_path=None, show=True) -> None:
+    def plot_crop(self, channel=None, length_excess=None, save_path=None, show=True, ax=None):
         """Show a cropped image around this GUV."""
 
         if channel is None:
@@ -222,7 +222,12 @@ class GUV:
         y_min = max(0, int(self.yc - view_radius))
         y_max = min(self.image_view.image.shape[1], int(self.yc + view_radius + 1))
 
-        fig, ax = plt.subplots()
+        created_fig = ax is None
+        if created_fig:
+            fig, ax = plt.subplots()
+        else:
+            fig = ax.figure
+
         ax.imshow(self.image_view.image[channel, y_min:y_max, x_min:x_max], cmap="gray")
         ax.set_title(f"GUV {self.id} crop - channel {channel}")
         ax.axis("equal")
@@ -231,10 +236,13 @@ class GUV:
         if save_path is not None:
             fig.savefig(save_path, dpi=self.settings.plotting.dpi, bbox_inches="tight")
 
-        if show:
-            plt.show()
-        else:
-            plt.close(fig)
+        if created_fig:
+            if show:
+                plt.show()
+            else:
+                plt.close(fig)
+        return fig, ax
+
 
     @skip_if_dead
     def calculate_intensity_profiles(self) -> None: 
