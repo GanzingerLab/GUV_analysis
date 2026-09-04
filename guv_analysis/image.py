@@ -42,7 +42,7 @@ class GUVImage:
     def __init__(self, path, settings):
         self.path = path
         self.settings = settings
-        self.image, self.pixel_size , self.detections= open_data(path, settings.detection_suffix) 
+        self.image, self.pixel_size , self.detections = open_data(path, settings.detection_suffix) 
         self.image_view = GUVImageView(path = self.path, image = self.image, pixel_size = self.pixel_size, global_mask = None)
 
         self.guvs = {int(guv_id): GUV(id=int(guv_id), xc=float(xc), yc=float(yc), radius=float(radius), image_view = self.image_view, settings = settings, on_death_marked=self._on_guv_death_marked)

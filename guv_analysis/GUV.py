@@ -243,7 +243,6 @@ class GUV:
                 plt.close(fig)
         return fig, ax
 
-
     @skip_if_dead
     def calculate_intensity_profiles(self) -> None: 
         intensity_profiles, death_mark, comment = linear_profiles(
